@@ -20,14 +20,17 @@ describe('WHtml2docx', function() {
 
     let fpIn = `./test/ztmp.html`
     let fpOut = `./test/ztmp.docx`
-    let opt = {}
+    let opt = {
+        imgRatioWidthMax: 0.5,
+    }
 
     it('convert', async function() {
         await WHtml2docx(fpIn, fpOut, opt)
         let r = (fs.statSync(fpOut)).size
         let rr = (fs.statSync(fpOutTrue)).size
         //轉出docx檔案每次不同, 改用門檻比對
-        let b = r > 82000 && rr > 82000
+        // console.log('r', r, 'rr', rr)
+        let b = r > 62000 && rr > 62000
         w.fsDeleteFile(fpOut)
         assert.strict.deepEqual(true, b)
     })

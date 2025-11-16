@@ -108,30 +108,63 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
     #選擇模板調整字型
     try:
+
         fontFamilies=opt['fontFamilies']
+
         if hasattr(fontFamilies, "__len__"):
             if len(fontFamilies)>0:
                 #print(fontFamilies)
+
                 docInTemp.Activate()
                 app.Selection.WholeStory()
+
                 for fn in fontFamilies:
                     # print(fn)
                     app.Selection.Font.Name = fn
+
     except:
         err=getError()
         print(err)
 
     #選擇模板偵測各圖片寬度是否大於滿版(412), 並限制於最大值
     try:
+
+        imgRatioWidthMax=opt['imgRatioWidthMax']
+        imgRatioHeightMax=opt['imgRatioHeightMax']
+
+        page_setup = docInTemp.PageSetup
+        pageW = page_setup.PageWidth #A4≈595 pt
+        pageH = page_setup.PageHeight #A4≈842 pt
+        leftM = page_setup.LeftMargin
+        rightM = page_setup.RightMargin
+        topM = page_setup.TopMargin
+        bottomM = page_setup.BottomMargin
+
+        #版心最大maxW, maxH
+        maxW = pageW - leftM - rightM
+        maxW = maxW * imgRatioWidthMax
+        maxH = (pageH - topM - bottomM) * 0.937043054427296 #高度須預留圖名空間
+        maxH = maxH * imgRatioHeightMax
+
         docInTemp.Activate()
         app.Selection.WholeStory()
         #print(len(app.Selection.Range.InlineShapes)) #有幾張圖
         for s in app.Selection.Range.InlineShapes:
             try:
-                s.LockAspectRatio = True
-                #240 -> 8.47公分 max=14.55公分 
-                if s.Width > 412:
-                    s.Width = 412 
+
+                #w, h
+                w = s.Width
+                h = s.Height
+
+                #scale, 計算縮放比例
+                scaleW = maxW / w if w > maxW else 1
+                scaleH = maxH / h if h > maxH else 1
+                scale = min(scaleW, scaleH)
+
+                if scale < 1:
+                    s.LockAspectRatio = True
+                    s.Width = w * scale   #只設width, LockAspectRatio=true會讓height依比例調整
+
             except:
                 err = getError()
                 print(err)
@@ -173,6 +206,8 @@ def core(b64):
         #opt
         opt={}
         opt['fontFamilies']=o['fontFamilies']
+        opt['imgRatioWidthMax']=o['imgRatioWidthMax']
+        opt['imgRatioHeightMax']=o['imgRatioHeightMax']
 
         #htmlToDocx
         htmlToDocx(fpInSrc, fpInTemp, fpOut, opt)

@@ -8,7 +8,9 @@ async function test() {
 
     let fpIn = `./test/ztmp.html`
     let fpOut = `./test/ztmp.docx`
-    let opt = {}
+    let opt = {
+        imgRatioWidthMax: 0.5,
+    }
 
     let r = await WHtml2docx(fpIn, fpOut, opt)
     console.log(r)
