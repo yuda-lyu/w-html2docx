@@ -1,0 +1,24 @@
+
+0.可用pyinstaller或nuitka編譯，但nuitka編譯出檔案會小一點(4x mb)，不過卻無法執行待研究
+
+1.可先用一般編譯方式產生spec檔: pyinstaller -F htmlToDocx.py，就會產生htmlToDocx.spec
+
+2.若有需要修改spec後，編譯指令改為對spec檔編譯: pyinstaller build.spec
+
+3.使用build.bat進行編譯
+
+8.編譯完複製htmlToDocx.exe至bin，使用bin\run.bat執行，傳入的b64可將物件
+{
+    'fpIn':'input.html',
+    'fpOut':'output.docx'
+}
+序列化成字串再轉base64即可
+
+----------------------------------------------------------------------
+參考
+
+解决方法：pyinstaller打包缺文件
+https://www.geek-share.com/detail/2773482967.html
+
+pyinstaller spec文件
+https://pyinstaller.readthedocs.io/en/stable/spec-files.html

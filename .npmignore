@@ -1,0 +1,4 @@
+node_modules
+srcPython/build
+srcPython/dist
+src/htmlToDocx.exe

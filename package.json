@@ -1,0 +1,32 @@
+{
+  "name": "w-html2docx",
+  "version": "1.0.0",
+  "main": "dist/w-html2docx.umd.js",
+  "dependencies": {
+    "lodash-es": "^4.17.21",
+    "wsemi": "^1.8.34"
+  },
+  "devDependencies": {
+    "w-package-tools": "^1.1.2"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.mjs",
+    "test": "mocha --parallel --timeout 60000",
+    "deploy": "gh-pages -d docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuda-lyu/w-html2docx.git"
+  },
+  "keywords": [
+    "package",
+    "tool",
+    "win32com",
+    "html",
+    "docx",
+    "windows",
+    "nodejs"
+  ],
+  "author": "yuda-lyu(semisphere)",
+  "license": "MIT"
+}
