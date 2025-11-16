@@ -15,7 +15,7 @@ WHtml2docx WHtml2docx
 To view documentation or get support, visit [docs](https://yuda-lyu.github.io/w-html2docx/global.html).
 
 ## Core
-> `w-html2docx` is based on the `docx2pdf` in `python`, and only run in `Windows`.
+> `w-html2docx` is based on the `win32com` in `python`, and only run in `Windows`.
 
 ## Installation
 
