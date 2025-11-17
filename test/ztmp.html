@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-siteapp"/>
     <meta name="renderer" content="webkit" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-    <title>report</title>
+    <title>html</title>
 
     <!-- highlight -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
@@ -122,7 +122,7 @@
 .md li {
     display: list-item;
     /* margin: 0.4rem 0; */
-    /* padding: 0; */
+    padding: 0;
 }
 
 .md blockquote {
@@ -293,14 +293,40 @@
 <li style="margin:7px 0;">加強 AI 模型訓練與部署</li>
 <li style="margin:7px 0;">系統導入自動化測試（CI/CD）</li>
 </ol>
+
 <hr>
+
 <h2>七、附錄</h2>
+
 <h3>7.1 引用區塊層級</h3>
 <blockquote>
 <p>第1層引用</p>
 <p>第2層引用</p>
 <p>第3層引用</p>
 </blockquote>
+<hr>
+
+<h3>7.2 換行元素BR（用於再轉Docx）</h3>
+
+<!-- 若使用md轉html會自動移除display:none;, html須隱藏得用height:0; overflow:hidden;, br才能於docx生效 -->
+
+<p>文段1</p>
+
+<div style="height:0; overflow:hidden;">
+    <br>
+</div>
+
+<p>文段2</p>
+
+<div style="height:0; overflow:hidden;">
+    <br>
+</div>
+<div style="height:0; overflow:hidden;">
+    <br>
+</div>
+
+<p>文段3</p>
+
 <hr>
 
 <h2>註腳</h2>
