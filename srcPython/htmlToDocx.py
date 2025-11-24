@@ -86,7 +86,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
     app = wc.Dispatch('Word.Application')
 
     #正式版須隱藏
-    app.Visible = False #True False
+    app.Visible = False  
 
     #不詢問使用者
     app.DisplayAlerts = False 
@@ -95,32 +95,42 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
     docInTemp = app.Documents.Open(fpInTemp)
     docInSrc = app.Documents.Open(fpInSrc)
 
-    #選擇src並複製全文
-    docInSrc.Activate()
-    app.Selection.WholeStory()
-    app.Selection.Copy()
+    # 取得來源文件全文 Range（含格式）
+    rngSrc = docInSrc.Range()
 
-    #選擇模板並貼上全文
-    docInTemp.Activate()
-    app.Selection.Paste()
-    # WdFormatOriginalFormatting = 16
-    # app.Selection.PasteAndFormat(WdFormatOriginalFormatting)
+    # 取得模板文件的主內容 Range
+    rngDst = docInTemp.Content  # 或 docInTemp.Range()
+
+    # 如果你想插在文件最後，可先收合到結尾
+    WdCollapseEnd = 0 #wdCollapseEnd, 收合到Range結尾
+    rngDst.Collapse(WdCollapseEnd)
+
+    # 直接複製格式化文字（等同貼上，但不經過剪貼簿也不靠 Selection）
+    rngDst.FormattedText = rngSrc.FormattedText
+
+    # #選擇src並複製全文
+    # docInSrc.Activate()
+    # app.Selection.WholeStory()
+    # app.Selection.Copy()
+
+    # #選擇模板並貼上全文
+    # docInTemp.Activate()
+    # app.Selection.Paste()
+    # # WdFormatOriginalFormatting = 16
+    # # app.Selection.PasteAndFormat(WdFormatOriginalFormatting)
 
     #選擇模板調整字型
     try:
 
         fontFamilies=opt['fontFamilies']
 
-        if hasattr(fontFamilies, "__len__"):
-            if len(fontFamilies)>0:
-                #print(fontFamilies)
+        if isinstance(fontFamilies, (list, tuple)) and len(fontFamilies) > 0:
+            #print(fontFamilies)
 
-                docInTemp.Activate()
-                app.Selection.WholeStory()
-
-                for fn in fontFamilies:
-                    # print(fn)
-                    app.Selection.Font.Name = fn
+            rng = docInTemp.Range()
+            for fn in fontFamilies:
+                # print(fn)
+                rng.Font.Name = fn
 
     except:
         err=getError()
@@ -146,10 +156,8 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
         maxH = (pageH - topM - bottomM) * 0.937043054427296 #高度須預留圖名空間
         maxH = maxH * imgRatioHeightMax
 
-        docInTemp.Activate()
-        app.Selection.WholeStory()
-        #print(len(app.Selection.Range.InlineShapes)) #有幾張圖
-        for s in app.Selection.Range.InlineShapes:
+        # 使用 docInTemp.InlineShapes 直接取得整份文件所有圖片
+        for s in docInTemp.InlineShapes:
             try:
 
                 #w, h
@@ -166,19 +174,67 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
                     s.Width = w * scale   #只設width, LockAspectRatio=true會讓height依比例調整
 
             except:
-                err = getError()
-                print(err)
+                pass
+
+    except:
+        err=getError()
+        print(err)
+
+    #設定前後行距
+    try:
+
+        for p in docInTemp.Paragraphs:
+
+            try:
+                lf = p.Range.ListFormat
+            except:
+                #若可能沒有ListFormat須跳過
+                continue
+
+            listType = lf.ListType   # 0,1,2,3,4
+            listStr  = lf.ListString # '•', '1.', ''...
+            
+            # #測試顯示ListType
+            # try:
+            #     rng = p.Range.Duplicate
+            #     rng.End = rng.End - 1 #最末是換行符號, 不能插在換行符號後面
+            #     rng.InsertAfter(f"[{listType},{listStr}]")
+            # except:
+            #     err = getError()
+            #     print(err)
+            
+            WdListNoNumbering = 0       #普通段落
+            WdListSingleLevelNumber = 1 #單層編號清單
+            WdListMultiLevel = 2        #多層編號清單
+            WdListBullet = 3            #項目符號清單
+            WdListOutlineNumbering = 4  #大綱編號
+            is_list = (listType != WdListNoNumbering) or (listStr != "")
+
+            if is_list: 
+
+                fmt = p.Format
+
+                #關閉自動段前段後距離
+                try:
+                    fmt.SpaceBeforeAuto = False
+                    fmt.SpaceAfterAuto = False
+                except:
+                    pass
+
+                # 設定為 0.5 行
+                fmt.LineUnitBefore = 0.5
+                fmt.LineUnitAfter = 0.5
 
     except:
         err=getError()
         print(err)
 
     #SaveAs
-    WdSaveFormat = 16 # wdFormatDocumentDefault=16(docx) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveformat
+    WdSaveFormat = 16 #wdFormatDocumentDefault=16(docx) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveformat
     docInTemp.SaveAs2(fpOut, WdSaveFormat)
 
     # Close
-    WdDoNotSaveChanges = 0  # wdDoNotSaveChanges
+    WdDoNotSaveChanges = 0 #wdDoNotSaveChanges
     docInTemp.Close(WdDoNotSaveChanges)
     docInSrc.Close(WdDoNotSaveChanges)
 
