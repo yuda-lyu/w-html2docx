@@ -1,9 +1,6 @@
 # w-html2docx
 A tool for docx2pdf.
 
-w-html2docx w-html2docx
-WHtml2docx WHtml2docx
-
 ![language](https://img.shields.io/badge/language-JavaScript-orange.svg) 
 [![npm version](http://img.shields.io/npm/v/w-html2docx.svg?style=flat)](https://npmjs.org/package/w-html2docx) 
 [![license](https://img.shields.io/npm/l/w-html2docx.svg?style=flat)](https://npmjs.org/package/w-html2docx) 

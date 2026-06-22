@@ -63,7 +63,7 @@ def str2b64(v):
 def b642str(v):
     #base64字串轉字串
     import base64
-    return base64.b64decode(v)
+    return base64.b64decode(v).decode('utf-8')
 
 
 def readText(fn):
@@ -224,6 +224,23 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
                 # 設定為 0.5 行
                 fmt.LineUnitBefore = 0.5
                 fmt.LineUnitAfter = 0.5
+
+    except:
+        err=getError()
+        print(err)
+
+    #移除零寬空格佔位字元(U+200B): 來源為w-md2html於換行標記空div內插入之佔位字元, 用以撐過Word匯入不被當成空段落丟棄
+    #於此移除後該段落成為真正的空段落(乾淨段落標記, 顯示編輯標記時亦無可見字元)
+    try:
+
+        z = chr(0x200B) #U+200B 零寬空格
+
+        for p in docInTemp.Paragraphs:
+            rng = p.Range.Duplicate
+            rng.End = rng.End - 1 #排除段落結尾之段落標記, 避免破壞段落結構
+            t = rng.Text
+            if z in t:
+                rng.Text = t.replace(z, '') #移除佔位字元, 段落標記保留 => 乾淨空段落
 
     except:
         err=getError()

@@ -381,6 +381,24 @@
 
 <hr>
 
+<h3>7.3 換行/空段落（for="br" + 零寬空格ZWSP, 轉Docx為乾淨段落標記¶）</h3>
+
+<!-- 模擬w-md2html對空的<div for="br">注入零寬空格(U+200B): ZWSP撐過Word匯入使段落不被丟棄, w-html2docx於SaveAs前移除全文ZWSP => 乾淨空段落¶, 顯示編輯標記時無□/°/· -->
+
+<p>文段A</p>
+
+<div for="br">​</div>
+
+<p>文段B（與文段A間隔一個空段落）</p>
+
+<div for="br">​</div>
+<div for="br">​</div>
+<div for="br">​</div>
+
+<p>文段C（與文段B間隔三個連續空段落, 測試多個連續空行不被Word合併丟棄）</p>
+
+<hr>
+
 <h2>註腳</h2>
 <section class="footnotes" data-footnotes>
 <h2 id="footnote-label" class="sr-only" style="height:0px; line-height:0px; min-height:0px; overflow:hidden;">Footnotes</h2>
