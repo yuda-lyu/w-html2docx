@@ -229,6 +229,44 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
         err=getError()
         print(err)
 
+    #設定本文段落(p)與清單項目(li)之水平對齊, 已為置中者(如表格標題列, 圖名)不更動, 其餘改為左右對齊(兩端對齊), 使右側邊界齊平較為美觀
+    try:
+
+        WdAlignParagraphCenter = 1   #置中對齊
+        WdAlignParagraphJustify = 3  #左右對齊
+        WdOutlineLevelBodyText = 10  #本文層級, 標題(h1-h6)匯入後為大綱層級1-9
+        WdWithInTable = 12           #Information之參數, 判斷是否位於表格內
+
+        for p in docInTemp.Paragraphs:
+            try:
+
+                rng = p.Range
+
+                #跳過標題段落
+                if p.OutlineLevel != WdOutlineLevelBodyText:
+                    continue
+
+                #跳過表格內段落
+                if rng.Information(WdWithInTable):
+                    continue
+
+                #跳過圖片段落
+                if rng.InlineShapes.Count > 0:
+                    continue
+
+                #跳過置中段落
+                if p.Alignment == WdAlignParagraphCenter:
+                    continue
+
+                p.Alignment = WdAlignParagraphJustify
+
+            except:
+                pass
+
+    except:
+        err=getError()
+        print(err)
+
     #移除零寬空格佔位字元(U+200B): 來源為w-md2html於換行標記空div內插入之佔位字元, 用以撐過Word匯入不被當成空段落丟棄
     #於此移除後該段落成為真正的空段落(乾淨段落標記, 顯示編輯標記時亦無可見字元)
     try:

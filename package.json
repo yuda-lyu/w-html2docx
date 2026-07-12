@@ -1,12 +1,13 @@
 {
   "name": "w-html2docx",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "main": "dist/w-html2docx.umd.js",
   "dependencies": {
     "lodash-es": "^4.18.1",
     "wsemi": "^1.8.64"
   },
   "devDependencies": {
+    "fflate": "^0.8.3",
     "w-package-tools": "^1.1.10"
   },
   "scripts": {
