@@ -53,6 +53,24 @@ function getParagraphs(xml) {
 }
 
 
+function getTables(xml) {
+    //切出全部表格<w:tbl>
+    return [...xml.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>/g)].map((v) => v[0])
+}
+
+
+function getCells(tbl) {
+    //切出表格內全部儲存格<w:tc>, 並標記其文字與是否設定不換行
+    return [...tbl.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((v) => {
+        let s = v[0]
+        return {
+            noWrap: /<w:noWrap\s*\/>/.test(s), //來源html之white-space:nowrap匯入後為w:tcPr內之w:noWrap
+            text: [...s.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((v) => v[1]).join(''),
+        }
+    })
+}
+
+
 describe('WHtml2docx', function() {
 
     //check
@@ -141,6 +159,40 @@ describe('WHtml2docx', function() {
 
         let rsErr = cxs.filter((cx) => cx > emuMax)
         assert.strict.deepEqual([], rsErr)
+    })
+
+    it('表格內設定white-space:nowrap之儲存格已轉為不換行(w:noWrap)', function() {
+
+        //tbl, 來源html之4.3表格, 以其獨有之'編號'欄位定位
+        let tbl = getTables(xml).find((v) => v.includes('編號'))
+        assert.strict.deepEqual(true, w.isestr(tbl))
+
+        //cells
+        let cells = getCells(tbl)
+        assert.strict.deepEqual(true, cells.length > 0)
+
+        //來源html內有設定white-space:nowrap之短欄位, 均須為不換行
+        let tsNoWrap = ['編號', '項目', '單位', '狀態', '001', '甲項', '公尺', '完成', '002', '乙項', '公噸', '進行']
+        let rsErr = tsNoWrap.filter((t) => {
+            let c = cells.find((v) => v.text === t)
+            return !c || !c.noWrap
+        })
+        assert.strict.deepEqual([], rsErr)
+
+    })
+
+    it('表格內未設定white-space:nowrap之儲存格維持可換行', function() {
+
+        //tbl, 來源html之4.3表格
+        let tbl = getTables(xml).find((v) => v.includes('編號'))
+        let cells = getCells(tbl)
+
+        //長文字欄位未設定white-space:nowrap, 須維持可換行
+        let rs = cells.filter((v) => v.text.length > 10)
+        assert.strict.deepEqual(true, rs.length > 0)
+        let rsErr = rs.filter((v) => v.noWrap)
+        assert.strict.deepEqual([], rsErr)
+
     })
 
     it('已移除零寬空格佔位字元(U+200B)', function() {
