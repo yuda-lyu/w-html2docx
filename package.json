@@ -1,13 +1,13 @@
 {
   "name": "w-html2docx",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "main": "dist/w-html2docx.umd.js",
   "dependencies": {
-    "wsemi": "^1.8.77"
+    "wsemi": "^1.8.78"
   },
   "devDependencies": {
     "fflate": "^0.8.3",
-    "w-package-tools": "^1.1.13"
+    "w-package-tools": "^1.1.14"
   },
   "scripts": {
     "postinstall": "node scripts/install.mjs",
