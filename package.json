@@ -1,9 +1,9 @@
 {
   "name": "w-html2docx",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "main": "dist/w-html2docx.umd.js",
   "dependencies": {
-    "wsemi": "^1.8.80"
+    "wsemi": "^1.8.81"
   },
   "devDependencies": {
     "fflate": "^0.8.3",
