@@ -8,6 +8,7 @@ import cdbl from 'wsemi/src/cdbl.mjs'
 import str2b64 from 'wsemi/src/str2b64.mjs'
 import execProcess from 'wsemi/src/execProcess.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
+import autoDownloadFiles from './autoDownloadFiles.mjs'
 
 
 let fdSrv = path.resolve()
@@ -123,28 +124,9 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
     fpInTemp = path.resolve(fpInTemp)
     fpOutDocx = path.resolve(fpOutDocx)
 
-    //fnExe
-    let fnExe = `htmlToDocx.exe`
-
-    //fdExe
-    let fdExe = ''
-    if (true) {
-        let fdExeSrc = `${fdSrv}/src/`
-        let fdExeNM = `${fdSrv}/node_modules/w-html2docx/src/`
-        if (fsIsFile(`${fdExeSrc}${fnExe}`)) {
-            fdExe = fdExeSrc
-        }
-        else if (fsIsFile(`${fdExeNM}${fnExe}`)) {
-            fdExe = fdExeNM
-        }
-        else {
-            return Promise.reject('can not find folder for html2docx')
-        }
-    }
-    // console.log('fdExe', fdExe)
-
-    //prog
-    let prog = `${fdExe}${fnExe}`
+    //prog, 自動定位htmlToDocx.exe, 無檔案(安裝時npm封鎖scripts致postinstall未執行)則自動下載
+    let { fpExe } = await autoDownloadFiles()
+    let prog = fpExe
     // console.log('prog', prog)
 
     //inp
