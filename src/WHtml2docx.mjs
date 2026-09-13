@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import process from 'process'
 import get from 'lodash-es/get.js'
@@ -8,6 +9,8 @@ import cdbl from 'wsemi/src/cdbl.mjs'
 import str2b64 from 'wsemi/src/str2b64.mjs'
 import execProcess from 'wsemi/src/execProcess.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
+import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
+import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
 import autoDownloadFiles from './autoDownloadFiles.mjs'
 
 
@@ -22,14 +25,18 @@ function isWindows() {
 /**
  * Html檔轉Docx檔
  *
+ * 轉檔由套件內之htmlToDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。htmlToDocx.exe若不存在(安裝時npm封鎖scripts致postinstall未執行)會於轉檔當下自動下載，下載失敗則reject並帶網址與落點。
+ * 轉檔器內部失敗(Word未安裝、模板無法開啟、另存失敗等)一律reject並帶轉檔器回報之原因；resolve前另確認輸出檔已產生且非空。輸出資料夾不存在時自動建立
+ *
  * @param {String} fpInHtml 輸入來源Html檔位置字串
  * @param {String} fpOutDocx 輸入轉出Docx檔位置字串
  * @param {Object} [opt={}] 輸入設定物件，預設{}
- * @param {String} [opt.fpInTemp='./src/tmp.docx'] 輸入Docx模板檔案位置字串，預設'./src/tmp.docx'
+ * @param {String} [opt.fpInTemp=''] 輸入Docx模板檔案位置字串，有給時須存在否則reject；未給時依序取模組載入當下工作路徑之`./src/tmp.docx`或`./node_modules/w-html2docx/src/tmp.docx`(套件內建模板)，預設''
  * @param {Array|String} [opt.fontFamilies=['標楷體','Times New Roman']] 輸入轉出Docx時強制更改字型陣列或字串，陣列順序為變更順序，若有要覆寫字型得放後面。預設['標楷體','Times New Roman']
- * @param {String} [opt.imgRatioWidthMax=1] 輸入圖片最大寬度比例，值介於0至1，預設1
- * @param {String} [opt.imgRatioHeightMax=1] 輸入圖片最大高度比例，值介於0至1，預設1
- * @returns {Promise} 回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息
+ * @param {Number} [opt.imgRatioWidthMax=1] 輸入圖片最大寬度比例，值介於0至1，預設1
+ * @param {Number} [opt.imgRatioHeightMax=1] 輸入圖片最大高度比例，值介於0至1，預設1
+ * @param {Number} [opt.timeout=null] 輸入轉檔逾時毫秒數，預設null表示不限制；逾時時強制關閉轉檔器並reject回傳逾時訊息，惟由轉檔器經COM啟動之Word不在其程序樹內，不會一併被關閉
+ * @returns {Promise} 回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息字串
  * @example
  *
  * import w from 'wsemi'
@@ -94,9 +101,23 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
     }
     imgRatioHeightMax = cdbl(imgRatioHeightMax)
 
+    //timeout
+    let timeout = get(opt, 'timeout')
+    if (!ispnum(timeout)) {
+        timeout = null
+    }
+
     //fpInTemp
     let fpInTemp = get(opt, 'fpInTemp')
-    if (!isestr(fpInTemp)) {
+    if (isestr(fpInTemp)) {
+
+        //check, 呼叫端有提供時須存在, 與fpInHtml之檢查對稱; 否則會由轉檔器於開啟模板時失敗, 訊息為Word之COM錯誤而看不出是路徑問題
+        if (!fsIsFile(fpInTemp)) {
+            return Promise.reject(`fpInTemp[${fpInTemp}] does not exist`)
+        }
+
+    }
+    else {
 
         //fnTmp
         let fnTmp = `tmp.docx`
@@ -124,6 +145,15 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
     fpInTemp = path.resolve(fpInTemp)
     fpOutDocx = path.resolve(fpOutDocx)
 
+    //fdOutDocx, 輸出資料夾不存在時自動建立, 否則Word另存時失敗
+    let fdOutDocx = path.dirname(fpOutDocx)
+    if (!fsIsFolder(fdOutDocx)) {
+        fsCreateFolder(fdOutDocx)
+        if (!fsIsFolder(fdOutDocx)) {
+            return Promise.reject(`can not create folder[${fdOutDocx}] for fpOutDocx`)
+        }
+    }
+
     //prog, 自動定位htmlToDocx.exe, 無檔案(安裝時npm封鎖scripts致postinstall未執行)則自動下載
     let { fpExe } = await autoDownloadFiles()
     let prog = fpExe
@@ -134,7 +164,7 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
         fpInSrc: fpInHtml,
         fpInTemp,
         fpOut: fpOutDocx,
-        fontFamilies: ['標楷體', 'Times New Roman'],
+        fontFamilies,
         imgRatioWidthMax,
         imgRatioHeightMax,
     }
@@ -145,11 +175,15 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
     let b64Input = str2b64(cInput)
     // console.log('b64Input', b64Input)
 
-    //execProcess
-    await execProcess(prog, b64Input)
+    //execProcess, 轉檔器成功時印success且離開碼0, 失敗時印error: 原因且離開碼1, 故離開碼非0即reject並帶其輸出
+    //  codeCmd給auto: 現行轉檔器以utf-8輸出, 尚未重新下載之舊版轉檔器以系統字碼頁(中文Windows為cp950)輸出, auto先以utf-8嚴格解碼, 遇非utf-8位元組改用系統字碼頁, 兩者皆可正確解碼; 轉檔器損毀時bootloader之ANSI訊息亦同
+    let output = ''
+    await execProcess(prog, b64Input, { codeCmd: 'auto', timeout })
+        .then((r) => {
+            output = r
+        })
         .catch((err) => {
-            console.log('execProcess catch', err)
-            errTemp = err.toString()
+            errTemp = String(err).trim()
         })
 
     //check
@@ -157,10 +191,10 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
         return Promise.reject(errTemp)
     }
 
-    // //check
-    // if (!isestr(output)) {
-    //     return Promise.reject(`output[${cstr(output)}] is not an effective string`)
-    // }
+    //check, 轉檔器回報成功仍須確認輸出檔存在且非空: 舊版轉檔器於Word未安裝、模板無法開啟等失敗時仍以離開碼0結束, 只在輸出印出error
+    if (!fsIsFile(fpOutDocx) || fs.statSync(fpOutDocx).size === 0) {
+        return Promise.reject(`fpOutDocx[${fpOutDocx}] was not generated: ${output.trim()}`)
+    }
 
     return 'ok'
 }

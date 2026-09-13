@@ -199,4 +199,55 @@ describe('WHtml2docx', function() {
         assert.strict.deepEqual(false, xml.includes(String.fromCharCode(0x200B)))
     })
 
+    it('指定非預設字型時確實套用, 且輸出資料夾不存在時自動建立', async function() {
+        this.timeout(60000)
+
+        //fdTmp, 測試專用暫存資料夾, 測前確認不存在, 測後刪除
+        let fdTmp = `./test/_tmp/WHtml2docx`
+        let fpOut2 = `${fdTmp}/sub/ztmp2.docx`
+        w.fsDeleteFolder(fdTmp)
+        assert.strict.deepEqual(false, w.fsIsFolder(fdTmp))
+
+        //fontFamilies2, 與預設值不同且來源html未使用之字型, 轉出文件出現該字型即證明opt.fontFamilies確實被送入轉檔器
+        let fontFamilies2 = ['新細明體', 'Georgia']
+        let r = await WHtml2docx(fpIn, fpOut2, { fontFamilies: fontFamilies2 })
+        assert.strict.deepEqual('ok', r)
+        let xml2 = getDocumentXml(fpOut2)
+        assert.strict.deepEqual(true, xml2.includes(`w:eastAsia="${fontFamilies2[0]}"`))
+        assert.strict.deepEqual(true, xml2.includes(`w:ascii="${fontFamilies2[1]}"`))
+
+        w.fsDeleteFolder(fdTmp)
+    })
+
+})
+
+
+describe('WHtml2docx input checks', function() {
+
+    //check
+    if (!isWindows()) {
+        return
+    }
+
+    //以下不需Word即可執行, 皆於轉檔前被擋下
+
+    it('fpInHtml不存在時reject並含路徑', async function() {
+        let err = null
+        await WHtml2docx('./test/no-such-file.html', './test/_tmp/WHtml2docx/x.docx')
+            .catch((e) => {
+                err = e
+            })
+        assert.strict.deepEqual(true, typeof err === 'string' && err.includes('fpInHtml[') && err.includes('does not exist'))
+    })
+
+    it('fpInTemp有給但不存在時reject並含路徑', async function() {
+        let err = null
+        await WHtml2docx('./test/ztmp.html', './test/_tmp/WHtml2docx/x.docx', { fpInTemp: './test/no-such-temp.docx' })
+            .catch((e) => {
+                err = e
+            })
+        assert.strict.deepEqual(true, typeof err === 'string' && err.includes('fpInTemp[') && err.includes('does not exist'))
+        assert.strict.deepEqual(false, w.fsIsFolder('./test/_tmp/WHtml2docx')) //於檢查階段即reject, 不會建立輸出資料夾
+    })
+
 })

@@ -8,4 +8,5 @@ tmp
 .claude
 srcPython/build
 srcPython/dist
+test/_tmp
 

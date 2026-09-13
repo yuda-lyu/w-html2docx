@@ -18,6 +18,9 @@ let pmDownload = null
  * 依序偵測當前工作路徑的src/與node_modules/w-html2docx/src/，皆無htmlToDocx.exe時，
  * 代表安裝時npm封鎖scripts致postinstall未執行，故自動調用downloadFiles重新下載
  *
+ * 下載係先寫入暫存檔`htmlToDocx.exe.download`，完成後才改名為htmlToDocx.exe，故下載中途斷線或程序被終止時不會留下截斷之htmlToDocx.exe，下次呼叫會重新下載；
+ * 下載失敗(斷網、代理不可達、非2xx回應、中途斷線)時reject字串`failed to download url[網址] to file[落點]: 原因`
+ *
  * 供w-html2docx自身與其他依賴w-html2docx的套件調用，無須各自實作偵測與下載邏輯
  *
  * 因htmlToDocx.exe只能用於Windows作業系統，故調用前須自行檢核作業系統
@@ -66,12 +69,11 @@ async function autoDownloadFiles() {
         //併發呼叫共用同一個下載Promise, 避免重複下載
         if (pmDownload === null) {
             pmDownload = downloadFiles(fdBaseDL)
-                .catch((err) => {
+                .finally(() => {
 
-                    //下載失敗歸零, 使下次呼叫可重試下載
+                    //下載結束(成敗皆然)歸零, 使下次呼叫重新依檔案是否存在判定; 若只於失敗時歸零, 下載成功後檔案被移除(重裝套件、防毒隔離)或程序切換工作路徑時, 會沿用已resolve之Promise而不再下載
                     pmDownload = null
 
-                    return Promise.reject(err)
                 })
         }
         await pmDownload
@@ -85,7 +87,7 @@ async function autoDownloadFiles() {
 
     //check
     if (fdBase === '') {
-        return Promise.reject('can not find htmlToDocx.exe')
+        return Promise.reject(`can not find ${fnExe} in [${fdBaseSelf}] or [${fdBaseNM}]`)
     }
 
     //fpExe

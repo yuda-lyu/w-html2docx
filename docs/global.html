@@ -140,13 +140,15 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>Html檔轉Docx檔</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>Html檔轉Docx檔</p>
+<p>轉檔由套件內之htmlToDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。htmlToDocx.exe若不存在(安裝時npm封鎖scripts致postinstall未執行)會於轉檔當下自動下載，下載失敗則reject並帶網址與落點。
+轉檔器內部失敗(Word未安裝、模板無法開啟、另存失敗等)一律reject並帶轉檔器回報之原因；resolve前另確認輸出檔已產生且非空。輸出資料夾不存在時自動建立</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WHtml2docx.mjs.html">WHtml2docx.mjs</a>, <a href="WHtml2docx.mjs.html#line61">line 61</a>
+        <a href="WHtml2docx.mjs.html">WHtml2docx.mjs</a>, <a href="WHtml2docx.mjs.html#line68">line 68</a>
     </li></ul></dd>
     
 
@@ -193,7 +195,30 @@
 
     <h5 class="h5-examples">Example</h5>
     
-    <pre class="prettyprint"><code>import w from 'wsemi'import WHtml2docx from './src/WHtml2docx.mjs'//import WHtml2docx from 'w-html2docx/src/WHtml2docx.mjs'//import WHtml2docx from 'w-html2docx'async function test() {    let fpIn = `./test/ztmp.html`    let fpOut = `./test/ztmp.docx`    let opt = {        imgRatioWidthMax: 0.5,    }    let r = await WHtml2docx(fpIn, fpOut, opt)    console.log(r)    // => ok    w.fsDeleteFile(fpOut)}test()    .catch((err) => {        console.log('catch', err)    })</code></pre>
+    <pre class="prettyprint"><code>import w from 'wsemi'
+import WHtml2docx from './src/WHtml2docx.mjs'
+//import WHtml2docx from 'w-html2docx/src/WHtml2docx.mjs'
+//import WHtml2docx from 'w-html2docx'
+
+async function test() {
+
+    let fpIn = `./test/ztmp.html`
+    let fpOut = `./test/ztmp.docx`
+    let opt = {
+        imgRatioWidthMax: 0.5,
+    }
+
+    let r = await WHtml2docx(fpIn, fpOut, opt)
+    console.log(r)
+    // => ok
+
+    w.fsDeleteFile(fpOut)
+
+}
+test()
+    .catch((err) => {
+        console.log('catch', err)
+    })</code></pre>
 
 
 
@@ -390,12 +415,12 @@
             
                 <td class="default">
                 
-                    <code>'./src/tmp.docx'</code>
+                    <code>''</code>
                 
                 </td>
             
 
-            <td class="description last"><p>輸入Docx模板檔案位置字串，預設'./src/tmp.docx'</p></td>
+            <td class="description last"><p>輸入Docx模板檔案位置字串，有給時須存在否則reject；未給時依序取模組載入當下工作路徑之<code>./src/tmp.docx</code>或<code>./node_modules/w-html2docx/src/tmp.docx</code>(套件內建模板)，預設''</p></td>
         </tr>
 
     
@@ -451,7 +476,7 @@
             <td class="type">
             
                 
-<span class="param-type">String</span>
+<span class="param-type">Number</span>
 
 
 
@@ -491,7 +516,7 @@
             <td class="type">
             
                 
-<span class="param-type">String</span>
+<span class="param-type">Number</span>
 
 
 
@@ -519,6 +544,46 @@
             
 
             <td class="description last"><p>輸入圖片最大高度比例，值介於0至1，預設1</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeout</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Number</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入轉檔逾時毫秒數，預設null表示不限制；逾時時強制關閉轉檔器並reject回傳逾時訊息，惟由轉檔器經COM啟動之Word不在其程序樹內，不會一併被關閉</p></td>
         </tr>
 
     
@@ -551,7 +616,7 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息字串</p>
 </div>
 
 
@@ -591,6 +656,8 @@
     <dd class="tag-description"><ul class="dummy"><li><p>自動定位htmlToDocx.exe，若無檔案則自動下載，回傳htmlToDocx.exe的絕對路徑</p>
 <p>依序偵測當前工作路徑的src/與node_modules/w-html2docx/src/，皆無htmlToDocx.exe時，
 代表安裝時npm封鎖scripts致postinstall未執行，故自動調用downloadFiles重新下載</p>
+<p>下載係先寫入暫存檔<code>htmlToDocx.exe.download</code>，完成後才改名為htmlToDocx.exe，故下載中途斷線或程序被終止時不會留下截斷之htmlToDocx.exe，下次呼叫會重新下載；
+下載失敗(斷網、代理不可達、非2xx回應、中途斷線)時reject字串<code>failed to download url[網址] to file[落點]: 原因</code></p>
 <p>供w-html2docx自身與其他依賴w-html2docx的套件調用，無須各自實作偵測與下載邏輯</p>
 <p>因htmlToDocx.exe只能用於Windows作業系統，故調用前須自行檢核作業系統</p></li></ul></dd>
     
@@ -598,7 +665,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="autoDownloadFiles.mjs.html">autoDownloadFiles.mjs</a>, <a href="autoDownloadFiles.mjs.html#line43">line 43</a>
+        <a href="autoDownloadFiles.mjs.html">autoDownloadFiles.mjs</a>, <a href="autoDownloadFiles.mjs.html#line46">line 46</a>
     </li></ul></dd>
     
 
@@ -723,7 +790,7 @@ test()
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Sep 13 2026 13:02:38 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Sep 13 2026 21:52:07 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

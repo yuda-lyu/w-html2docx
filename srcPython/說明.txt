@@ -3,16 +3,24 @@
 
 1.可先用一般編譯方式產生spec檔: pyinstaller -F htmlToDocx.py，就會產生htmlToDocx.spec
 
-2.若有需要修改spec後，編譯指令改為對spec檔編譯: pyinstaller build.spec
+2.若有需要修改spec後，編譯指令改為對spec檔編譯: python -m PyInstaller htmlToDocx.spec --noconfirm --clean (於srcPython內執行, 產物為dist/htmlToDocx.exe, 再複製至../src/htmlToDocx.exe)
 
 3.使用build.bat進行編譯
 
-8.編譯完複製htmlToDocx.exe至bin，使用bin\run.bat執行，傳入的b64可將物件
+4.建置環境須先安裝 pip install pyinstaller pywin32。2026-09-13 現行exe以Python 3.14.3 + PyInstaller 6.22.3 + pywin32 312建置
+
+8.編譯完複製htmlToDocx.exe至src，使用run.bat執行，傳入的b64可將物件
 {
-    'fpIn':'input.html',
-    'fpOut':'output.docx'
+    'fpInSrc': 'input.html',           #來源html絕對路徑
+    'fpInTemp': 'tmp.docx',            #docx模板絕對路徑
+    'fpOut': 'output.docx',            #輸出docx絕對路徑
+    'fontFamilies': ['標楷體', 'Times New Roman'], #依序強制更改之字型
+    'imgRatioWidthMax': 1,             #圖片最大寬度比例(0至1)
+    'imgRatioHeightMax': 1,            #圖片最大高度比例(0至1)
 }
-序列化成字串再轉base64即可
+序列化成json字串再轉base64即可
+
+9.輸出約定: stdout與stderr皆為utf-8。成功時stdout印 success 且離開碼0；失敗時stdout印 error: 例外類別: 原因(如 error: com_error: (-2147221005, '無效的類別字串', None, None) 為Word未安裝) 且離開碼1。各調整步驟(字型、圖片縮放、行距、對齊、零寬空格)之例外只印至stderr不影響結果。任一步驟例外時仍會關閉已開啟之文件並結束Word
 
 ----------------------------------------------------------------------
 參考

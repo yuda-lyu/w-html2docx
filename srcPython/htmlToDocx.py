@@ -1,4 +1,5 @@
-from win32com import client as wc  
+from win32com import client as wc
+import sys
 
 #使用win32com
 #win32com因更新問題會出現 ImportError: DLL load failed while importing win32api: 找不到指定的模組。
@@ -58,7 +59,7 @@ def str2b64(v):
     import base64
     v=base64.b64encode(v.encode('utf-8'))
     return str(v,'utf-8')
-    
+
 
 def b642str(v):
     #base64字串轉字串
@@ -72,7 +73,7 @@ def readText(fn):
     with codecs.open(fn,'r',encoding='utf8') as f:
         return f.read()
 
-    
+
 def writeText(fn,str):
     #寫出文字str至檔案fn
     import codecs
@@ -80,20 +81,13 @@ def writeText(fn,str):
         f.write(str)
 
 
-def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
+def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
 
-    #Dispatch
-    app = wc.Dispatch('Word.Application')
-
-    #正式版須隱藏
-    app.Visible = False  
-
-    #不詢問使用者
-    app.DisplayAlerts = False 
-
-    #Open
+    #Open, 開啟之文件推入docs, 供htmlToDocx於finally關閉
     docInTemp = app.Documents.Open(fpInTemp)
+    docs.append(docInTemp)
     docInSrc = app.Documents.Open(fpInSrc)
+    docs.append(docInSrc)
 
     # 取得來源文件全文 Range（含格式）
     rngSrc = docInSrc.Range()
@@ -134,7 +128,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
     except:
         err=getError()
-        print(err)
+        print(err, file=sys.stderr)
 
     #選擇模板偵測各圖片寬度是否大於滿版(412), 並限制於最大值
     try:
@@ -178,7 +172,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
     except:
         err=getError()
-        print(err)
+        print(err, file=sys.stderr)
 
     #設定前後行距
     try:
@@ -193,7 +187,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
             listType = lf.ListType   # 0,1,2,3,4
             listStr  = lf.ListString # '•', '1.', ''...
-            
+
             # #測試顯示ListType
             # try:
             #     rng = p.Range.Duplicate
@@ -202,7 +196,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
             # except:
             #     err = getError()
             #     print(err)
-            
+
             WdListNoNumbering = 0       #普通段落
             WdListSingleLevelNumber = 1 #單層編號清單
             WdListMultiLevel = 2        #多層編號清單
@@ -210,7 +204,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
             WdListOutlineNumbering = 4  #大綱編號
             is_list = (listType != WdListNoNumbering) or (listStr != "")
 
-            if is_list: 
+            if is_list:
 
                 fmt = p.Format
 
@@ -227,7 +221,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
     except:
         err=getError()
-        print(err)
+        print(err, file=sys.stderr)
 
     #設定本文段落(p)與清單項目(li)之水平對齊, 已為置中者(如表格標題列, 圖名)不更動, 其餘改為左右對齊(兩端對齊), 使右側邊界齊平較為美觀
     try:
@@ -265,7 +259,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
     except:
         err=getError()
-        print(err)
+        print(err, file=sys.stderr)
 
     #移除零寬空格佔位字元(U+200B): 來源為w-md2html於換行標記空div內插入之佔位字元, 用以撐過Word匯入不被當成空段落丟棄
     #於此移除後該段落成為真正的空段落(乾淨段落標記, 顯示編輯標記時亦無可見字元)
@@ -282,20 +276,46 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
     except:
         err=getError()
-        print(err)
+        print(err, file=sys.stderr)
 
     #SaveAs
     WdSaveFormat = 16 #wdFormatDocumentDefault=16(docx) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveformat
     docInTemp.SaveAs2(fpOut, WdSaveFormat)
 
-    # Close
-    WdDoNotSaveChanges = 0 #wdDoNotSaveChanges
-    docInTemp.Close(WdDoNotSaveChanges)
-    docInSrc.Close(WdDoNotSaveChanges)
 
-    #Quit
-    WdSaveOptions = 0 #wdDoNotSaveChanges=0(不儲存擱置中變更) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveoptions
-    app.Quit(WdSaveOptions)
+def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
+
+    #Dispatch
+    app = wc.Dispatch('Word.Application')
+
+    #正式版須隱藏
+    app.Visible = False
+
+    #不詢問使用者
+    app.DisplayAlerts = False
+
+    #docs, 已開啟之文件, 由htmlToDocxCore推入
+    docs = []
+
+    #任一步驟例外時亦須關閉已開啟之文件並結束Word, 否則殘留之WINWORD會鎖住模板與輸出檔, 使後續轉檔失敗
+    try:
+        htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt)
+    finally:
+
+        # Close
+        WdDoNotSaveChanges = 0 #wdDoNotSaveChanges
+        for doc in reversed(docs):
+            try:
+                doc.Close(WdDoNotSaveChanges)
+            except:
+                pass
+
+        #Quit
+        WdSaveOptions = 0 #wdDoNotSaveChanges=0(不儲存擱置中變更) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveoptions
+        try:
+            app.Quit(WdSaveOptions)
+        except:
+            pass
 
 
 def core(b64):
@@ -326,45 +346,56 @@ def core(b64):
         state='success'
     except:
         err=getError()
-        state='error: '+str(err["message"])
+        state='error: '+err['type'].__name__+': '+str(err['message'])
 
     return state
 
 
 def run():
-    import sys
+
+    #stdout與stderr改為utf-8: Python寫pipe時預設用系統ANSI字碼頁(中文Windows為cp950), 呼叫端須猜編碼才能讀, 且訊息含cp950無法編碼之字元時print會拋UnicodeEncodeError;
+    #PyInstaller打包後不吃PYTHONIOENCODING與PYTHONUTF8, 只能於此設定
+    for f in (sys.stdout, sys.stderr):
+        try:
+            f.reconfigure(encoding='utf-8', errors='backslashreplace')
+        except:
+            pass
 
     #由外部程序呼叫或直接給予檔案路徑
     state=''
     argv=sys.argv
     #argv=['','']
     if len(argv)==2:
-        
+
         #b64
         b64=sys.argv[1]
-        
+
         #core
         state=core(b64)
-        
+
     else:
         #print(sys.argv)
         state='error: invalid length of argv'
-    
+
     #print & flush
     print(state)
     sys.stdout.flush()
 
+    #失敗時以非0離開碼結束, 使呼叫端(如wsemi之execProcess)能直接以離開碼判定成敗, 不必解析輸出
+    if state != 'success':
+        sys.exit(1)
+
 
 if True:
     #正式版
-    
+
     #run
     run()
-    
-    
+
+
 if False:
     #產生測試輸入b64
-    
+
     #inp
     inp={
         'fpInSrc':'./ztmp.html',
@@ -373,7 +404,7 @@ if False:
         'fontFamilies': ['標楷體','Times New Roman'], #word使用, 因由左往右設定, 故得先設定標楷體再設定Times New Roman
     }
     # print(o2j(inp))
-    
+
     #str2b64
     b64=str2b64(o2j(inp))
     print(b64)
