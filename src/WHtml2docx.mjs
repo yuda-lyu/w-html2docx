@@ -5,7 +5,9 @@ import get from 'lodash-es/get.js'
 import isestr from 'wsemi/src/isestr.mjs'
 import isearr from 'wsemi/src/isearr.mjs'
 import ispnum from 'wsemi/src/ispnum.mjs'
+import isp0int from 'wsemi/src/isp0int.mjs'
 import cdbl from 'wsemi/src/cdbl.mjs'
+import cint from 'wsemi/src/cint.mjs'
 import str2b64 from 'wsemi/src/str2b64.mjs'
 import execProcess from 'wsemi/src/execProcess.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
@@ -33,8 +35,9 @@ function isWindows() {
  * @param {Object} [opt={}] 輸入設定物件，預設{}
  * @param {String} [opt.fpInTemp=''] 輸入Docx模板檔案位置字串，有給時須存在否則reject；未給時依序取模組載入當下工作路徑之`./src/tmp.docx`或`./node_modules/w-html2docx/src/tmp.docx`(套件內建模板)，預設''
  * @param {Array|String} [opt.fontFamilies=['標楷體','Times New Roman']] 輸入轉出Docx時強制更改字型陣列或字串，陣列順序為變更順序，若有要覆寫字型得放後面。預設['標楷體','Times New Roman']
- * @param {Number} [opt.imgRatioWidthMax=1] 輸入圖片最大寬度比例，值介於0至1，預設1
- * @param {Number} [opt.imgRatioHeightMax=1] 輸入圖片最大高度比例，值介於0至1，預設1
+ * @param {Number} [opt.imgRatioWidthMax=1] 輸入圖片最大寬度比例，值介於0至1，圖片最大寬度為所在節之版心寬乘以本值，預設1
+ * @param {Number} [opt.imgRatioHeightMax=1] 輸入圖片最大高度比例，值介於0至1，圖片最大高度為所在節之版心高乘以0.937043054427296(為圖名預留空間)再乘以本值；有給imgHeightReserveLines且其生效時，改為其算出之高度乘以本值。預設1
+ * @param {Integer} [opt.imgHeightReserveLines=null] 輸入行格線模板之圖片下方預留格數，為非負整數，預設null(不啟用)。僅於圖片所在節設有文件格線(Word之「只指定行的格線」「指定行與字元的格線」「文字對齊字元格線」)時生效：圖片最大高度改為(每頁格數－本值)×行距－0.5點，行距為模板之文件格線行距(w:docGrid之w:linePitch)，每頁格數為版心高÷行距之整數部分。行格線下圖片段佔「圖高÷行距」無條件進位之格數，故整頁高之圖下方仍留有本值格數，供間隔段與圖名使用，例如間隔段1格、圖名至多2行時至少給3。格數依實際所佔計，行距18點時12pt中文字每行佔1格、14pt之標楷體每行佔2格。建議再多給1格作為餘裕(如前例給4)：帶段前段後距離之段落會使其後各行不再對齊格線而多佔，頁首頁尾高於邊界時Word亦會縮小本文區，使每頁實際格數少於推算值。給無效值、模板無行格線、或本值不小於每頁格數時不生效，沿用imgRatioHeightMax之預設算法
  * @param {Number} [opt.timeout=null] 輸入轉檔逾時毫秒數，預設null表示不限制；逾時時強制關閉轉檔器並reject回傳逾時訊息，惟由轉檔器經COM啟動之Word不在其程序樹內，不會一併被關閉
  * @returns {Promise} 回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息字串
  * @example
@@ -100,6 +103,15 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
         imgRatioHeightMax = 1
     }
     imgRatioHeightMax = cdbl(imgRatioHeightMax)
+
+    //imgHeightReserveLines, 非負整數才採用, 其餘(含Infinity等非有限值)為null(不啟用)
+    let imgHeightReserveLines = get(opt, 'imgHeightReserveLines', null)
+    if (isp0int(imgHeightReserveLines) && Number.isFinite(Number(imgHeightReserveLines))) {
+        imgHeightReserveLines = cint(imgHeightReserveLines)
+    }
+    else {
+        imgHeightReserveLines = null
+    }
 
     //timeout
     let timeout = get(opt, 'timeout')
@@ -167,6 +179,7 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
         fontFamilies,
         imgRatioWidthMax,
         imgRatioHeightMax,
+        imgHeightReserveLines,
     }
     // console.log('inp', inp)
 

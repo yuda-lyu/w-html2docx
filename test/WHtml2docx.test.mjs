@@ -1,8 +1,11 @@
 import fs from 'fs'
+import path from 'path'
+import { spawnSync } from 'child_process'
 import w from 'wsemi'
 import assert from 'assert'
 import { unzipSync, strFromU8 } from 'fflate'
 import WHtml2docx from '../src/WHtml2docx.mjs'
+import { genTallPng, genGridTemplate, genFigureHtml, getImgHeights, getFigurePages } from './tools/imgHeightFixture.mjs'
 
 
 function isWindows() {
@@ -248,6 +251,124 @@ describe('WHtml2docx input checks', function() {
             })
         assert.strict.deepEqual(true, typeof err === 'string' && err.includes('fpInTemp[') && err.includes('does not exist'))
         assert.strict.deepEqual(false, w.fsIsFolder('./test/_tmp/WHtml2docx')) //於檢查階段即reject, 不會建立輸出資料夾
+    })
+
+})
+
+
+describe('WHtml2docx imgHeightReserveLines', function() {
+
+    //check
+    if (!isWindows()) {
+        return
+    }
+
+    //fdTmp, 本describe專用暫存資料夾, 於after刪除
+    let fdTmp = path.resolve('./test/_tmp/WHtml2docx-imgHeight')
+    let fpTempGrid = path.resolve(fdTmp, 'tempGrid.docx')
+    let fpHtml = path.resolve(fdTmp, 'figures.html')
+
+    //行格線模板由內建模板衍生(見genGridTemplate): A4且上下邊界72點, 版心高697.9點; 行距18點, 每頁格數floor(697.9÷18)=38
+    let pitch = 18
+    let nLines = 38
+    let hDefault = 697.9 * 0.937043054427296 //未啟用時之圖高上限: 版心高×0.937043054427296×imgRatioHeightMax(1)
+    let tol = 0.05 //Word之尺寸以twip(0.05點)量化
+
+    let conv = async (name, opt) => {
+        let fpOut = path.resolve(fdTmp, `${name}.docx`)
+        let r = await WHtml2docx(fpHtml, fpOut, opt)
+        assert.strict.deepEqual('ok', r)
+        return fpOut
+    }
+
+    //assertHeights, 4張長圖皆恰縮至上限(長圖原高遠超上限, 縮放後即等於上限)
+    let assertHeights = (fp, hExpect) => {
+        let hs = getImgHeights(fp)
+        assert.strict.deepEqual(4, hs.length)
+        let rsErr = hs.filter((h) => Math.abs(h - hExpect) > tol)
+        assert.strict.deepEqual([], rsErr, `expect ${hExpect}, got ${hs.join(',')}`)
+    }
+
+    before(function() {
+        fs.rmSync(fdTmp, { recursive: true, force: true })
+        fs.mkdirSync(fdTmp, { recursive: true })
+        genGridTemplate(path.resolve('./src/tmp.docx'), fpTempGrid)
+        fs.writeFileSync(fpHtml, genFigureHtml(genTallPng().toString('base64')), 'utf8')
+    })
+
+    after(function() {
+        fs.rmSync(fdTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        try {
+            fs.rmdirSync(path.resolve('./test/_tmp')) //尚有其他測試之暫存時非空, 略過
+        }
+        catch (err) {}
+    })
+
+    it('行格線模板給3格: 圖高上限為(每頁格數-3)×行距-0.5點, 且每張圖與其圖名(首行與末行)同頁', async function() {
+        this.timeout(180000)
+        let fp = await conv('grid-R3', { fpInTemp: fpTempGrid, imgHeightReserveLines: 3 })
+
+        //規格: 圖片最大高度改為(每頁格數－本值)×行距－0.5點
+        assertHeights(fp, (nLines - 3) * pitch - 0.5)
+
+        //規格: 整頁高之圖下方仍留有本值格數供間隔段與圖名使用; 間隔段1格加2行圖名恰為3格, 即每頁恰好排滿, 圖與圖名仍同頁
+        let ps = getFigurePages(fp)
+        assert.strict.deepEqual(4, ps.length)
+        let rsErr = ps.filter((p) => p.capStart !== p.img || p.capEnd !== p.img)
+        assert.strict.deepEqual([], rsErr)
+    })
+
+    it('行格線模板未給: 沿用預設上限(版心高×0.937043054427296)', async function() {
+        this.timeout(180000)
+        let fp = await conv('grid-none', { fpInTemp: fpTempGrid })
+
+        //規格: 預設null(不啟用), 圖片最大高度為版心高乘以0.937043054427296再乘以imgRatioHeightMax
+        assertHeights(fp, hDefault)
+    })
+
+    it('無行格線模板(內建模板)給3格: 不生效, 沿用預設上限', async function() {
+        this.timeout(180000)
+        let fp = await conv('builtin-R3', { imgHeightReserveLines: 3 })
+
+        //規格: 模板無行格線時不生效
+        assertHeights(fp, hDefault)
+    })
+
+    it('給無效值(負數、小數、非數字)或不小於每頁格數(38)時不生效, 沿用預設上限', async function() {
+        this.timeout(300000)
+        for (let [name, v] of [['neg', -1], ['float', 1.5], ['str', 'abc'], ['all', nLines]]) {
+            let fp = await conv(`grid-${name}`, { fpInTemp: fpTempGrid, imgHeightReserveLines: v })
+
+            //規格: 給無效值、或本值不小於每頁格數時不生效
+            assertHeights(fp, hDefault)
+        }
+    })
+
+    it('imgRatioHeightMax乘於其算出之高度', async function() {
+        this.timeout(180000)
+        let fp = await conv('grid-R3-ratio', { fpInTemp: fpTempGrid, imgHeightReserveLines: 3, imgRatioHeightMax: 0.5 })
+
+        //規格: 有給imgHeightReserveLines且其生效時, 改為其算出之高度乘以imgRatioHeightMax
+        assertHeights(fp, ((nLines - 3) * pitch - 0.5) * 0.5)
+    })
+
+    it('舊版呼叫端(轉檔器輸入不含imgHeightReserveLines)照常轉檔, 沿用預設上限', function() {
+        this.timeout(180000)
+
+        //轉檔器一律自master下載, 舊版套件亦執行新版轉檔器, 故轉檔器須容許輸入缺此鍵
+        let fpOut = path.resolve(fdTmp, 'grid-oldcaller.docx')
+        let inp = {
+            fpInSrc: fpHtml,
+            fpInTemp: fpTempGrid,
+            fpOut,
+            fontFamilies: ['標楷體', 'Times New Roman'],
+            imgRatioWidthMax: 1,
+            imgRatioHeightMax: 1,
+        }
+        let sp = spawnSync(path.resolve('./src/htmlToDocx.exe'), [Buffer.from(JSON.stringify(inp), 'utf8').toString('base64')], { windowsHide: true, timeout: 170000 })
+        assert.strict.deepEqual(0, sp.status, String(sp.stdout))
+        assert.strict.deepEqual('success', String(sp.stdout).trim())
+        assertHeights(fpOut, hDefault)
     })
 
 })

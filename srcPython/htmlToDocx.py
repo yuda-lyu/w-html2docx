@@ -81,6 +81,79 @@ def writeText(fn,str):
         f.write(str)
 
 
+def getSectGrids(fpTemp):
+    #讀模板各節之文件格線, 依文件順序回傳[{type, pitch}], 與Word之Sections索引同序; 讀取失敗回傳[]
+    #why: Word COM之PageSetup無行距(LinePitch)屬性, 而版心高÷LinesPage並非實際行距(實測行距18點之模板為18.37), 須自模板之docGrid取得
+    import re
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(fpTemp) as z:
+            xml = z.read('word/document.xml').decode('utf-8')
+    except:
+        return []
+
+    #修訂紀錄內之舊設定不計
+    xml = re.sub(r'<w:(sectPrChange|pPrChange)\b[\s\S]*?</w:\1>', '', xml)
+
+    rs = []
+    for m in re.finditer(r'<w:sectPr\b[^>]*?/>|<w:sectPr\b[^>]*>[\s\S]*?</w:sectPr>', xml):
+        t = 'default' #未給type即無格線
+        pitch = 0
+        g = re.search(r'<w:docGrid\b([^>]*)>', m.group(0))
+        if g:
+            mt = re.search(r'w:type="([^"]+)"', g.group(1))
+            mp = re.search(r'w:linePitch="(\d+)"', g.group(1))
+            if mt:
+                t = mt.group(1)
+            if mp:
+                pitch = int(mp.group(1)) / 20 #twip轉點
+        rs.append({'type': t, 'pitch': pitch})
+
+    return rs
+
+
+def getImgHeightMaxByGrid(ps, grid, contentH, reserveLines):
+    #行格線模板之圖片最大高度: (每頁格數-預留格數)×行距-0.5點, 不適用時回傳None
+    #實測(Word 16.0.14334): 行距即docGrid之linePitch; 每頁格數為floor(版心高÷行距); 行內圖片段佔ceil(圖高÷行距)格, 不另加下沿;
+    #  由k格進位為k+1格之門檻多恰為k×行距, 部分行距(如20點)下提前至多0.25點, 故減0.5點
+    import math
+
+    if grid is None or grid['type'] not in ('lines', 'linesAndChars', 'snapToChars'):
+        return None
+    if ps.LayoutMode not in (1, 2, 3): #wdLayoutModeGrid, wdLayoutModeLineGrid, wdLayoutModeGenko
+        return None
+    pitch = grid['pitch']
+    if pitch <= 0:
+        return None
+    nLines = int(math.floor(contentH / pitch + 1e-6))
+    if reserveLines >= nLines:
+        print(f'imgHeightReserveLines[{reserveLines}] is not less than the lines per page[{nLines}], use the default max height', file=sys.stderr)
+        return None
+    return (nLines - reserveLines) * pitch - 0.5
+
+
+def getImgSizeMax(ps, grid, opt):
+    #圖片最大寬高, 依所在節之版心計算
+
+    #版心
+    contentW = ps.PageWidth - ps.LeftMargin - ps.RightMargin
+    contentH = ps.PageHeight - ps.TopMargin - ps.BottomMargin
+
+    #maxW
+    maxW = contentW * opt['imgRatioWidthMax']
+
+    #maxH, 預設版心高之0.937043054427296倍, 為圖名預留空間; 有給預留格數且模板有行格線時改以格數計算
+    maxH = contentH * 0.937043054427296
+    if opt['imgHeightReserveLines'] is not None:
+        h = getImgHeightMaxByGrid(ps, grid, contentH, opt['imgHeightReserveLines'])
+        if h is not None:
+            maxH = h
+    maxH = maxH * opt['imgRatioHeightMax']
+
+    return maxW, maxH
+
+
 def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
 
     #Open, 開啟之文件推入docs, 供htmlToDocx於finally關閉
@@ -130,29 +203,29 @@ def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
         err=getError()
         print(err, file=sys.stderr)
 
-    #選擇模板偵測各圖片寬度是否大於滿版(412), 並限制於最大值
+    #選擇模板偵測各圖片寬高是否大於最大值(見getImgSizeMax), 並等比例縮小
     try:
 
-        imgRatioWidthMax=opt['imgRatioWidthMax']
-        imgRatioHeightMax=opt['imgRatioHeightMax']
+        #grids, 模板各節之文件格線, 僅有給預留格數時需要; 節數與文件不符(轉入內容另有分節)時不採用, 沿用預設算法
+        grids = getSectGrids(fpInTemp) if opt['imgHeightReserveLines'] is not None else []
+        if len(grids) != docInTemp.Sections.Count:
+            grids = []
 
-        page_setup = docInTemp.PageSetup
-        pageW = page_setup.PageWidth #A4≈595 pt
-        pageH = page_setup.PageHeight #A4≈842 pt
-        leftM = page_setup.LeftMargin
-        rightM = page_setup.RightMargin
-        topM = page_setup.TopMargin
-        bottomM = page_setup.BottomMargin
-
-        #版心最大maxW, maxH
-        maxW = pageW - leftM - rightM
-        maxW = maxW * imgRatioWidthMax
-        maxH = (pageH - topM - bottomM) * 0.937043054427296 #高度須預留圖名空間
-        maxH = maxH * imgRatioHeightMax
+        #kpMax, 各節之最大寬高
+        #why: 以圖片所在節之版面計算, 各節版面不同之模板以docInTemp.PageSetup取值會得wdUndefined
+        kpMax = {}
 
         # 使用 docInTemp.InlineShapes 直接取得整份文件所有圖片
         for s in docInTemp.InlineShapes:
             try:
+
+                #maxW, maxH
+                sect = s.Range.Sections(1)
+                k = sect.Index
+                if k not in kpMax:
+                    grid = grids[k - 1] if len(grids) > 0 else None
+                    kpMax[k] = getImgSizeMax(sect.PageSetup, grid, opt)
+                maxW, maxH = kpMax[k]
 
                 #w, h
                 w = s.Width
@@ -164,8 +237,11 @@ def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
                 scale = min(scaleW, scaleH)
 
                 if scale < 1:
-                    s.LockAspectRatio = True
-                    s.Width = w * scale   #只設width, LockAspectRatio=true會讓height依比例調整
+                    s.LockAspectRatio = True #LockAspectRatio=true時只設一邊, 另一邊依比例調整
+                    if scaleH < scaleW:
+                        s.Height = h * scale #高度受限時直接設高度, 避免由寬度換算之進位使高度略超上限(行格線下超過即多佔1格)
+                    else:
+                        s.Width = w * scale
 
             except:
                 pass
@@ -319,6 +395,7 @@ def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
 
 
 def core(b64):
+    import math
     state=''
 
     try:
@@ -339,6 +416,15 @@ def core(b64):
         opt['fontFamilies']=o['fontFamilies']
         opt['imgRatioWidthMax']=o['imgRatioWidthMax']
         opt['imgRatioHeightMax']=o['imgRatioHeightMax']
+
+        #imgHeightReserveLines, 非負整數才採用, 其餘為None(不啟用)
+        #note: 須以get取得, 舊版呼叫端不送此鍵, 而轉檔器一律自master下載, 舊版亦會執行新版轉檔器
+        reserveLines=o.get('imgHeightReserveLines')
+        if isinstance(reserveLines, bool) or not isinstance(reserveLines, (int, float)) or not math.isfinite(reserveLines) or reserveLines < 0 or reserveLines != int(reserveLines):
+            reserveLines=None
+        else:
+            reserveLines=int(reserveLines)
+        opt['imgHeightReserveLines']=reserveLines
 
         #htmlToDocx
         htmlToDocx(fpInSrc, fpInTemp, fpOut, opt)

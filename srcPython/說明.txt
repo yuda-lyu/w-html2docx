@@ -7,7 +7,7 @@
 
 3.使用build.bat進行編譯
 
-4.建置環境須先安裝 pip install pyinstaller pywin32。2026-09-13 現行exe以Python 3.14.3 + PyInstaller 6.22.3 + pywin32 312建置
+4.建置環境須先安裝 pip install pyinstaller pywin32。2026-10-10 現行exe以Python 3.14.3 + PyInstaller 6.22.3 + pywin32 312建置
 
 8.編譯完複製htmlToDocx.exe至src，使用run.bat執行，傳入的b64可將物件
 {
@@ -17,10 +17,16 @@
     'fontFamilies': ['標楷體', 'Times New Roman'], #依序強制更改之字型
     'imgRatioWidthMax': 1,             #圖片最大寬度比例(0至1)
     'imgRatioHeightMax': 1,            #圖片最大高度比例(0至1)
+    'imgHeightReserveLines': None,     #行格線模板之圖片下方預留格數(非負整數), 可省略, 省略或無效時不啟用
 }
 序列化成json字串再轉base64即可
 
 9.輸出約定: stdout與stderr皆為utf-8。成功時stdout印 success 且離開碼0；失敗時stdout印 error: 例外類別: 原因(如 error: com_error: (-2147221005, '無效的類別字串', None, None) 為Word未安裝) 且離開碼1。各調整步驟(字型、圖片縮放、行距、對齊、零寬空格)之例外只印至stderr不影響結果。任一步驟例外時仍會關閉已開啟之文件並結束Word
+
+10.圖片最大寬高依圖片所在節之版心計算: 寬為版心寬×imgRatioWidthMax; 高預設為版心高×0.937043054427296×imgRatioHeightMax。
+有給imgHeightReserveLines且圖片所在節設有文件格線(docGrid之type為lines、linesAndChars或snapToChars)時, 高改為((每頁格數－預留格數)×行距－0.5)×imgRatioHeightMax,
+行距取模板該節之docGrid linePitch(Word COM無此屬性, 由模板之word/document.xml讀取), 每頁格數為floor(版心高÷行距); 預留格數不小於每頁格數時不啟用並印提示至stderr。
+2026-10-10 以Word 16.0.14334實測: 行內圖片段佔ceil(圖高÷行距)格; 由k格進位為k+1格之門檻多恰為k×行距, 行距20點時部分k提前至多0.25點, 故減0.5點
 
 ----------------------------------------------------------------------
 參考
