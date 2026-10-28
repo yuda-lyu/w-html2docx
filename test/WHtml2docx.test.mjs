@@ -1,4 +1,5 @@
 import fs from 'fs'
+import http from 'http'
 import path from 'path'
 import { spawnSync } from 'child_process'
 import w from 'wsemi'
@@ -8,6 +9,7 @@ import WHtml2docx from '../src/WHtml2docx.mjs'
 import ensureBins from '../src/ensureBins.mjs'
 import { setBinEnv } from './tools/binEnv.mjs'
 import { genTallPng, genGridTemplate, genFigureHtml, getImgHeights, getFigurePages } from './tools/imgHeightFixture.mjs'
+import { LINK_CASES, genLinkCases, genHtml, genLinkHtml, getDocxPictures } from './tools/imgLinkFixture.mjs'
 
 
 function isWindows() {
@@ -421,6 +423,232 @@ describe('WHtml2docx imgHeightReserveLines', function() {
         assert.strict.deepEqual(0, sp.status, String(sp.stdout))
         assert.strict.deepEqual('success', String(sp.stdout).trim())
         assertHeights(fpOut, hDefault)
+    })
+
+})
+
+
+describe('WHtml2docx local pictures', function() {
+
+    //check
+    if (!isWindows()) {
+        return
+    }
+
+    //規格: 建議w-html2docx調整.md(2026-10-29, 來源審計md2docx-run01): Word匯入html時本機圖片為連結圖, 轉檔須斷開連結內嵌, 解析不到者報錯
+    //  可解析: 反斜線絕對路徑, 相對路徑原字, file:///原字; 不可解析: 正斜線絕對路徑, 百分比編碼之路徑或網址(Word 16實測)
+
+    //fdTmp, 本describe專用暫存資料夾, 其下fx/含圖片夾「圖 資料夾」與網頁夾「頁 面」(路徑含中文與空白), 於after刪除
+    let fdTmp = path.resolve('./test/_tmp/WHtml2docx-link')
+    let fdOut = path.join(fdTmp, 'out')
+    let fx = null
+
+    //本機http伺服器(供Word取遠端圖片): /a.png回傳案A1之圖, 其餘404
+    let port = 8938
+    let server = null
+    let urls = []
+
+    let c = (id) => {
+        return fx.cases.find((v) => v.id === id)
+    }
+
+    let cs = (ids) => {
+        return ids.map(c)
+    }
+
+    //fpHtmlOf, 以案組出html
+    let fpHtmlOf = (name, cases) => {
+        return genLinkHtml(cases, path.join(fx.fdHtml, `${name}.html`))
+    }
+
+    //convOk, 轉檔須成功, 回傳docx路徑
+    let convOk = async (name, fpHtml) => {
+        let fpOut = path.join(fdOut, `${name}.docx`)
+        let r = await WHtml2docx(fpHtml, fpOut)
+        assert.strict.deepEqual('ok', r)
+        return fpOut
+    }
+
+    //convErr, 轉檔須失敗(reject字串)且不產生輸出檔, 回傳訊息
+    let convErr = async (name, fpHtml) => {
+        let fpOut = path.join(fdOut, `${name}.docx`)
+        let err = null
+        await WHtml2docx(fpHtml, fpOut)
+            .catch((e) => {
+                err = e
+            })
+        assert.strict.deepEqual('string', typeof err, String(err))
+        assert.strict.deepEqual(false, fs.existsSync(fpOut))
+        return err
+    }
+
+    //assertEmbedded, docx須自足: 圖片關聯無外部連結, a:blip皆為r:embed並指向word/media內之檔, word/media內有各來源圖片(位元組相同)
+    let assertEmbedded = (fp, srcs) => {
+        let p = getDocxPictures(fp)
+
+        //規格: 圖片關聯無TargetMode="External"
+        assert.strict.deepEqual([], p.imageRels.filter((v) => v.external))
+
+        //規格: <a:blip>為r:embed而非r:link, 且參照之關聯指向word/media內存在之檔
+        assert.strict.deepEqual(true, p.blips.length >= srcs.length, `blips ${p.blips.length}`)
+        for (let b of p.blips) {
+            assert.strict.deepEqual('', b.link)
+            let rel = p.imageRels.find((v) => v.id === b.embed)
+            assert.strict.deepEqual(true, rel !== undefined, `blip embed[${b.embed}]`)
+            assert.strict.deepEqual(true, p.media.some((m) => m.name === rel.target), rel.target)
+        }
+
+        //規格: word/media有各來源圖片, 位元組與來源檔(data URI者為其解碼內容)相同
+        for (let bytes of srcs) {
+            assert.strict.deepEqual(true, p.media.some((m) => m.bytes.equals(bytes)), `media ${p.media.map((m) => `${m.name}:${m.bytes.length}`).join(',')}`)
+        }
+
+        return p
+    }
+
+    //restoreBinEnv, htmlToDocx.exe自本機鏡像(取自repo內bin/)取得, 不連外網
+    let restoreBinEnv = null
+
+    before(async function() {
+        restoreBinEnv = setBinEnv('WHtml2docx-link-bin')
+        fs.rmSync(fdTmp, { recursive: true, force: true })
+        fs.mkdirSync(fdOut, { recursive: true })
+        fx = genLinkCases(path.join(fdTmp, 'fx'))
+        server = http.createServer((req, res) => {
+            urls.push(req.url)
+            if (req.url === '/a.png') {
+                res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(c('A1').bytes.length) })
+                res.end(c('A1').bytes)
+            }
+            else {
+                res.writeHead(404)
+                res.end()
+            }
+        })
+        await new Promise((resolve, reject) => {
+            server.once('error', reject)
+            server.listen(port, '127.0.0.1', resolve)
+        })
+    })
+
+    after(async function() {
+        await new Promise((resolve) => {
+            server.close(resolve)
+        })
+        restoreBinEnv()
+        fs.rmSync(fdTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        try {
+            fs.rmdirSync(path.resolve('./test/_tmp')) //尚有其他測試之暫存時非空, 略過
+        }
+        catch (err) {}
+    })
+
+    //assertSvgEmbedded, SVG以向量(svg)與點陣預覽(png)內嵌; Word會重寫svg內容(如色碼轉大寫), 故不比對位元組, 只確認為來源之svg(含來源之紅色矩形)
+    let assertSvgEmbedded = (p) => {
+        let svgs = p.media.filter((m) => m.name.endsWith('.svg')).map((m) => m.bytes.toString('utf8').toLowerCase())
+        assert.strict.deepEqual(true, svgs.some((s) => s.includes('<svg') && s.includes('#dc2626')), JSON.stringify(svgs))
+        assert.strict.deepEqual(true, p.media.some((m) => m.name.endsWith('.png')))
+    }
+
+    for (let id of ['A1', 'R1', 'F2', 'J1', 'S1']) {
+        it(`${id} Word可解析之本機路徑寫法(${LINK_CASES.find((v) => v.id === id).desc}): 圖片斷開連結內嵌, docx自足`, async function() {
+            this.timeout(180000)
+            let fp = await convOk(id, fpHtmlOf(id, cs([id])))
+            if (id === 'S1') {
+                assertSvgEmbedded(assertEmbedded(fp, []))
+            }
+            else {
+                assertEmbedded(fp, [c(id).bytes])
+            }
+        })
+    }
+
+    for (let id of ['B', 'D2']) {
+        it(`${id} ${LINK_CASES.find((v) => v.id === id).desc}: 照舊內嵌, 圖數與顯示尺寸與改前相同`, async function() {
+            this.timeout(180000)
+            let fp = await convOk(id, fpHtmlOf(id, cs([id])))
+            let p = assertEmbedded(fp, [c(id).bytes])
+
+            //規格: data URI之圖片轉檔結果與改前相同; 改前(2026-10-29以現行bin/htmlToDocx.exe轉同夾具)之顯示尺寸: 320×180 px之PNG為240×135點, 240×120 px之JPEG為180×90點
+            assert.strict.deepEqual(1, p.extents.length)
+            let ex = id === 'B' ? { cx: 240, cy: 135 } : { cx: 180, cy: 90 }
+            assert.strict.deepEqual(true, Math.abs(p.extents[0].cx - ex.cx) <= 0.05 && Math.abs(p.extents[0].cy - ex.cy) <= 0.05, JSON.stringify(p.extents))
+        })
+    }
+
+    for (let [id, mk] of [['A2', 'A2.png'], ['R2', 'R2.png'], ['F1', 'F1.png']]) {
+        it(`${id} Word無法解析之寫法(${LINK_CASES.find((v) => v.id === id).desc}): reject並列出該圖來源, 不產生輸出檔`, async function() {
+            this.timeout(180000)
+            let err = await convErr(id, fpHtmlOf(id, cs([id])))
+
+            //規格: 斷開後仍為連結圖者以非0離開碼結束, 訊息列出SourceFullName(Word解析失敗時為其改寫之路徑, 仍含檔名)
+            assert.strict.deepEqual(true, err.startsWith('code[1]:'), err)
+            assert.strict.deepEqual(true, err.includes(`unresolved linked picture: `) && err.includes(mk), err)
+            assert.strict.deepEqual(true, /\b1 linked picture\(s\)/.test(err), err)
+        })
+    }
+
+    it('同一份html含10案: reject並只列出3個無法解析者, Word可解析者與data URI不列入', async function() {
+        this.timeout(180000)
+        let err = await convErr('all10', fpHtmlOf('all10', fx.cases))
+
+        //規格: 列出各無法解析圖片之SourceFullName, 其餘不列
+        assert.strict.deepEqual(true, /\b3 linked picture\(s\)/.test(err), err)
+        for (let mk of ['A2.png', 'R2.png', 'F1.png']) {
+            assert.strict.deepEqual(true, err.includes(mk), `${mk}: ${err}`)
+        }
+        for (let mk of ['A1.png', 'R1.png', 'F2.png', 'J1.jpg', 'S1.svg', 'B.png', 'D2.jpg']) {
+            assert.strict.deepEqual(false, err.includes(mk), `${mk}: ${err}`)
+        }
+        assert.strict.deepEqual(3, err.split('unresolved linked picture: ').length - 1, err)
+    })
+
+    it('同一份html含全部可解析者(5案)與data URI(2案): 7張圖皆內嵌', async function() {
+        this.timeout(180000)
+        let ids = ['A1', 'R1', 'F2', 'J1', 'S1', 'B', 'D2']
+        let fp = await convOk('embed7', fpHtmlOf('embed7', cs(ids)))
+        assertSvgEmbedded(assertEmbedded(fp, cs(ids.filter((v) => v !== 'S1')).map((v) => v.bytes)))
+    })
+
+    it('圖檔不存在: reject並列出該路徑, 不產生輸出檔', async function() {
+        this.timeout(180000)
+        let fpNo = path.join(path.dirname(c('A1').fp), '不 存在.png')
+        let fpHtml = genHtml(`<p>missing</p><p><img src="${fpNo}"></p>`, path.join(fx.fdHtml, 'missing.html'))
+        let err = await convErr('missing', fpHtml)
+
+        //規格: 解析不到之路徑報錯並列出SourceFullName
+        assert.strict.deepEqual(true, err.includes(`unresolved linked picture: ${fpNo}`), err)
+    })
+
+    it('浮動圖片(align="right"之Shapes)亦內嵌; 其不存在時亦reject並列出路徑', async function() {
+        this.timeout(180000)
+
+        //規格: 對全部InlineShapes與Shapes之連結圖斷開連結; Word匯入html時<img align="left|right">為浮動圖片(Shapes, 實測),
+        //  style="float:left|right"與position:absolute則仍為行內圖片(InlineShapes), 故以align測Shapes
+        let txt = 'text text text text text text text text text text text text'
+        let fpHtml = genHtml(`<p>float</p><p><img src="${c('A1').fp}" align="right" width="100"> ${txt}</p>`, path.join(fx.fdHtml, 'float.html'))
+        let fp = await convOk('float', fpHtml)
+        assertEmbedded(fp, [c('A1').bytes])
+        assert.strict.deepEqual(true, getDocumentXml(fp).includes('<wp:anchor'), 'the picture is expected to be a floating shape(wp:anchor)')
+
+        let fpNo = path.join(path.dirname(c('A1').fp), '浮 動不存在.png')
+        let fpHtml2 = genHtml(`<p>float</p><p><img src="${fpNo}" align="right" width="100"> ${txt}</p>`, path.join(fx.fdHtml, 'float-missing.html'))
+        let err = await convErr('float-missing', fpHtml2)
+        assert.strict.deepEqual(true, err.includes(`unresolved linked picture: ${fpNo}`), err)
+    })
+
+    it('http圖片: Word取回後內嵌; 取不到(404)時reject並列出網址', async function() {
+        this.timeout(180000)
+
+        //規格: 斷開連結時Word自網址取回圖片內嵌, 取不到者仍為連結圖而報錯
+        let fpHtml = genHtml(`<p>http</p><p><img src="http://127.0.0.1:${port}/a.png"></p>`, path.join(fx.fdHtml, 'http.html'))
+        let fp = await convOk('http', fpHtml)
+        assertEmbedded(fp, [c('A1').bytes])
+        assert.strict.deepEqual(true, urls.includes('/a.png'), JSON.stringify(urls))
+
+        let fpHtml2 = genHtml(`<p>http</p><p><img src="http://127.0.0.1:${port}/nope.png"></p>`, path.join(fx.fdHtml, 'http-404.html'))
+        let err = await convErr('http-404', fpHtml2)
+        assert.strict.deepEqual(true, err.includes(`unresolved linked picture: http://127.0.0.1:${port}/nope.png`), err)
     })
 
 })

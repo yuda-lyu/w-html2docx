@@ -30,10 +30,15 @@ function crc32(buf) {
 }
 
 
-//genTallPng, 產生單色RGB之PNG, 預設1200×2800px, 模擬整頁高之長圖(網站設計稿、長流程圖)
-function genTallPng(w = 1200, h = 2800) {
-    let row = Buffer.alloc(1 + w * 3, 220)
+//genPng, 產生單色RGB之PNG(w×h px, rgb為[r,g,b]), 色不同則位元組不同, 供需辨識是哪一張圖之測試使用
+function genPng(w, h, rgb) {
+    let row = Buffer.alloc(1 + w * 3)
     row[0] = 0 //filter none
+    for (let x = 0; x < w; x++) {
+        row[1 + x * 3] = rgb[0]
+        row[2 + x * 3] = rgb[1]
+        row[3 + x * 3] = rgb[2]
+    }
     let raw = Buffer.concat(Array.from({ length: h }, () => row))
     let chunk = (type, data) => {
         let len = Buffer.alloc(4)
@@ -50,6 +55,12 @@ function genTallPng(w = 1200, h = 2800) {
     ihdr[9] = 2 //RGB
     let sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+}
+
+
+//genTallPng, 產生單色RGB之PNG, 預設1200×2800px, 模擬整頁高之長圖(網站設計稿、長流程圖)
+function genTallPng(w = 1200, h = 2800) {
+    return genPng(w, h, [220, 220, 220])
 }
 
 
@@ -104,6 +115,7 @@ function getFigurePages(fp) {
 
 
 export {
+    genPng,
     genTallPng,
     genGridTemplate,
     genFigureHtml,
