@@ -154,6 +154,40 @@ def getImgSizeMax(ps, grid, opt):
     return maxW, maxH
 
 
+class LinkedPictureError(Exception):
+    #斷開連結後仍為連結圖, 即Word無法解析其來源路徑
+    pass
+
+
+def getLinkedPictures(doc):
+    #取出主文全部連結圖之[(LinkFormat, 來源SourceFullName)], 含行內圖片(InlineShapes)與浮動圖片(Shapes)
+    #note: 非連結圖取s.LinkFormat不會拋例外, 須讀其SourceFullName才能判斷(非連結圖會拋例外), 故以能否讀到SourceFullName為準
+    rs = []
+    for shapes in (doc.InlineShapes, doc.Shapes):
+        for s in shapes:
+            try:
+                lf = s.LinkFormat
+                rs.append((lf, str(lf.SourceFullName)))
+            except:
+                pass
+    return rs
+
+
+def embedLinkedPictures(doc):
+    #本機圖片內嵌: Word匯入html時本機圖片一律成連結圖(LinkFormat.SavePictureWithDocument=False), 另存docx照存為外部連結(TargetMode="External", a:blip只有r:link),
+    #  docx移至他處或刪除原圖後即成空框; 故複製進模板後逐一改為存入文件並斷開連結, data URI之圖片本即內嵌不受影響
+    #why: Word只解析反斜線絕對路徑, 相對路徑原字, file:///原字(實測Word 16); 正斜線絕對路徑, 百分比編碼之路徑或網址無法解析, 成24×24之破圖連結, 斷開後仍為連結圖,
+    #  此類不得悄悄存為破圖, 回傳其SourceFullName供呼叫端失敗並列出
+    for lf, fp in getLinkedPictures(doc):
+        try:
+            lf.SavePictureWithDocument = True
+            lf.BreakLink()
+        except:
+            pass #失敗者於下面複查仍為連結圖, 一併列為未內嵌
+
+    return [fp for lf, fp in getLinkedPictures(doc)]
+
+
 def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
 
     #Open, 開啟之文件推入docs, 供htmlToDocx於finally關閉
@@ -174,6 +208,13 @@ def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
 
     # 直接複製格式化文字（等同貼上，但不經過剪貼簿也不靠 Selection）
     rngDst.FormattedText = rngSrc.FormattedText
+
+    #本機圖片內嵌, 有無法內嵌者即失敗(尚未另存, 不產生輸出檔), 逐一列出來源至stderr
+    fpsUnresolved = embedLinkedPictures(docInTemp)
+    if len(fpsUnresolved) > 0:
+        for fp in fpsUnresolved:
+            print(f'unresolved linked picture: {fp}', file=sys.stderr)
+        raise LinkedPictureError(f'{len(fpsUnresolved)} linked picture(s) can not be embedded since Word can not resolve their source(see stderr)')
 
     # #選擇src並複製全文
     # docInSrc.Activate()

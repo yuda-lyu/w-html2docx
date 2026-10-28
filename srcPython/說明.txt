@@ -3,13 +3,13 @@
 
 1.可先用一般編譯方式產生spec檔: pyinstaller -F htmlToDocx.py，就會產生htmlToDocx.spec
 
-2.若有需要修改spec後，編譯指令改為對spec檔編譯: python -m PyInstaller htmlToDocx.spec --noconfirm --clean (於srcPython內執行, 產物為dist/htmlToDocx.exe, 再複製至../src/htmlToDocx.exe)
+2.若有需要修改spec後，編譯指令改為對spec檔編譯: python -m PyInstaller htmlToDocx.spec --noconfirm --clean --distpath ..\bin (於srcPython內執行, 產物直接輸出為../bin/htmlToDocx.exe)
 
-3.使用build.bat進行編譯
+3.使用build.bat進行編譯(內容即上條指令, 產物輸出至../bin/htmlToDocx.exe; 外部執行檔存放於bin/, 編譯後依README〈外部執行檔〉與rulebook R-BIN-08流程更新bin/manifest.json。src/htmlToDocx.exe為舊版相容保留檔, 不再更新)
 
 4.建置環境須先安裝 pip install pyinstaller pywin32。2026-10-10 現行exe以Python 3.14.3 + PyInstaller 6.22.3 + pywin32 312建置
 
-8.編譯完複製htmlToDocx.exe至src，使用run.bat執行，傳入的b64可將物件
+8.編譯完產生../bin/htmlToDocx.exe，使用run.bat執行(測試版)，傳入的b64可將物件
 {
     'fpInSrc': 'input.html',           #來源html絕對路徑
     'fpInTemp': 'tmp.docx',            #docx模板絕對路徑
@@ -22,11 +22,18 @@
 序列化成json字串再轉base64即可
 
 9.輸出約定: stdout與stderr皆為utf-8。成功時stdout印 success 且離開碼0；失敗時stdout印 error: 例外類別: 原因(如 error: com_error: (-2147221005, '無效的類別字串', None, None) 為Word未安裝) 且離開碼1。各調整步驟(字型、圖片縮放、行距、對齊、零寬空格)之例外只印至stderr不影響結果。任一步驟例外時仍會關閉已開啟之文件並結束Word
+圖片內嵌(見第11條)失敗時: stderr每行印一個無法解析之來源(unresolved linked picture: <SourceFullName>), stdout印 error: LinkedPictureError: N linked picture(s) can not be embedded ..., 離開碼1, 不產生輸出檔
 
 10.圖片最大寬高依圖片所在節之版心計算: 寬為版心寬×imgRatioWidthMax; 高預設為版心高×0.937043054427296×imgRatioHeightMax。
 有給imgHeightReserveLines且圖片所在節設有文件格線(docGrid之type為lines、linesAndChars或snapToChars)時, 高改為((每頁格數－預留格數)×行距－0.5)×imgRatioHeightMax,
 行距取模板該節之docGrid linePitch(Word COM無此屬性, 由模板之word/document.xml讀取), 每頁格數為floor(版心高÷行距); 預留格數不小於每頁格數時不啟用並印提示至stderr。
 2026-10-10 以Word 16.0.14334實測: 行內圖片段佔ceil(圖高÷行距)格; 由k格進位為k+1格之門檻多恰為k×行距, 行距20點時部分k提前至多0.25點, 故減0.5點
+
+11.圖片內嵌(2026-10-29, 審計md2docx-run01): Word匯入html時本機圖片(及http網址圖片)一律成連結圖(LinkFormat.SavePictureWithDocument=False), SaveAs2照存為外部連結(document.xml.rels為TargetMode="External", a:blip只有r:link), docx移他處或刪除原圖即成空框。
+複製進模板後(htmlToDocxCore)對InlineShapes與Shapes(浮動圖片)之連結圖逐一設SavePictureWithDocument=True並BreakLink(), 圖片存入docx(word/media, a:blip為r:embed); data URI之圖片本即內嵌。
+斷開後仍為連結圖者(判斷依據: 讀得到LinkFormat.SourceFullName; 非連結圖讀取會拋例外)即Word解析不到之來源(圖檔不存在, 網址取不到, 正斜線絕對路徑或百分比編碼之路徑與file網址), 以LinkedPictureError失敗(見第9條), 在另存之前, 不產生輸出檔。
+Word 16實測可解析: 反斜線絕對路徑, 相對路徑原字(相對於html檔), file:///原字(不編碼); 不可解析: 正斜線絕對路徑(Word改寫為C://...), 百分比編碼之相對路徑, pathToFileURL()之file:///...%E9...(Word不解碼, 再編為%25E9...)。
+SVG以svg(向量)加Word自產之png預覽內嵌; png、jpg維持原位元組。
 
 ----------------------------------------------------------------------
 參考
