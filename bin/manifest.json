@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "pkg": "w-html2docx",
+  "mode": "pinned",
+  "repo": "yuda-lyu/w-html2docx",
+  "commit": "7f73d2c236193382ee789a97fa86cd1dcf83ce1f",
+  "files": [
+    {
+      "name": "htmlToDocx.exe",
+      "path": "bin/htmlToDocx.exe",
+      "sha256": "9c763ac57b8851f5b3eb5b8d84d0735eb971c419c8f9ef01f5d698692f0fcefb",
+      "size": 9520316
+    }
+  ]
+}

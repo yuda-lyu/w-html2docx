@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#WHtml2docx">WHtml2docx</a></li><li><a href="global.html#autoDownloadFiles">autoDownloadFiles</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#WHtml2docx">WHtml2docx</a></li><li><a href="global.html#autoDownloadFiles">autoDownloadFiles</a></li><li><a href="global.html#ensureBins">ensureBins</a></li></ul>
     
 </nav>
 
@@ -141,14 +141,14 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>Html檔轉Docx檔</p>
-<p>轉檔由套件內之htmlToDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。htmlToDocx.exe若不存在(安裝時npm封鎖scripts致postinstall未執行)會於轉檔當下自動下載，下載失敗則reject並帶網址與落點。
+<p>轉檔由htmlToDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。htmlToDocx.exe不含於npm包，首次轉檔時經ensureBins自GitHub(釘選提交)或環境變數W_BIN_MIRROR之鏡像取得，以bin/manifest.json之SHA-256與大小校驗後存於快取(預設為套件根之bin-cache/，可由W_BIN_CACHE改位置)，之後自快取取得(亦校驗)；環境變數W_BIN_OFFLINE=1時不連網。取得失敗則reject字串，內含錯誤代碼(如E_OFFLINE_MISSING、E_HASH_MISMATCH)與原因，詳見README〈外部執行檔〉
 轉檔器內部失敗(Word未安裝、模板無法開啟、另存失敗等)一律reject並帶轉檔器回報之原因；resolve前另確認輸出檔已產生且非空。輸出資料夾不存在時自動建立</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WHtml2docx.mjs.html">WHtml2docx.mjs</a>, <a href="WHtml2docx.mjs.html#line71">line 71</a>
+        <a href="WHtml2docx.mjs.html">WHtml2docx.mjs</a>, <a href="WHtml2docx.mjs.html#line74">line 74</a>
     </li></ul></dd>
     
 
@@ -693,19 +693,146 @@ test()
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>自動定位htmlToDocx.exe，若無檔案則自動下載，回傳htmlToDocx.exe的絕對路徑</p>
-<p>依序偵測當前工作路徑的src/與node_modules/w-html2docx/src/，皆無htmlToDocx.exe時，
-代表安裝時npm封鎖scripts致postinstall未執行，故自動調用downloadFiles重新下載</p>
-<p>下載係先寫入暫存檔<code>htmlToDocx.exe.download</code>，完成後才改名為htmlToDocx.exe，故下載中途斷線或程序被終止時不會留下截斷之htmlToDocx.exe，下次呼叫會重新下載；
-下載失敗(斷網、代理不可達、非2xx回應、中途斷線)時reject字串<code>failed to download url[網址] to file[落點]: 原因</code></p>
-<p>供w-html2docx自身與其他依賴w-html2docx的套件調用，無須各自實作偵測與下載邏輯</p>
+    <dd class="tag-description"><ul class="dummy"><li><p>取得htmlToDocx.exe的絕對路徑，保留作為舊版對外匯入點之相容層，實際改由ensureBins取得</p>
+<p>舊版於當前工作路徑的src/與node_modules/w-html2docx/src/查找，缺檔時自主幹下載且不校驗；現改經ensureBins：首次使用時自GitHub(釘選提交)或環境變數W_BIN_MIRROR之鏡像取得，以bin/manifest.json之SHA-256與大小校驗後存於快取(預設為套件根之bin-cache/，可由W_BIN_CACHE改位置)，之後自快取取得(亦校驗)，故回傳之路徑位於快取而非src/。不在安裝時下載</p>
+<p>新程式碼請直接調用ensureBins(<code>w-html2docx/src/ensureBins.mjs</code>或<code>WHtml2docx.ensureBins</code>)</p>
 <p>因htmlToDocx.exe只能用於Windows作業系統，故調用前須自行檢核作業系統</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="autoDownloadFiles.mjs.html">autoDownloadFiles.mjs</a>, <a href="autoDownloadFiles.mjs.html#line46">line 46</a>
+        <a href="autoDownloadFiles.mjs.html">autoDownloadFiles.mjs</a>, <a href="autoDownloadFiles.mjs.html#line36">line 36</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+        <dt class="important tag-deprecated">Deprecated:</dt><dd><ul class="dummy"><li>改用ensureBins</li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-examples">Example</h5>
+    
+    <pre class="prettyprint"><code>import autoDownloadFiles from 'w-html2docx/src/autoDownloadFiles.mjs'
+
+async function test() {
+
+    //autoDownloadFiles, 經ensureBins取得並校驗htmlToDocx.exe, 取不到則reject
+    let { fpExe } = await autoDownloadFiles()
+
+    console.log('fpExe', fpExe)
+    // fpExe D:\xxx\node_modules\w-html2docx\bin-cache\&lt;sha256>\htmlToDocx.exe
+}
+test()
+    .catch((err) => {
+        console.log('catch', err)
+    })</code></pre>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>回傳Promise，resolve回傳執行檔路徑物件，內含fpExe為htmlToDocx.exe的絕對路徑字串，reject回傳帶code之Error(如E_OFFLINE_MISSING、E_HASH_MISMATCH)</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Promise</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="ensureBins"><span class="type-signature"></span>ensureBins<span class="signature">(opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>取得本套件之外部執行檔: 首次使用時下載(或自鏡像取得)並以bin/manifest.json之SHA-256與大小校驗, 之後自快取取得(亦校驗)</p>
+<p>規格: 外部執行檔之存放下載校驗與離線(制式規格)§6; 實作為wsemi之fsEnsureBins, 本套件不另寫下載、快取、鏡像、校驗
+環境變數: W_BIN_CACHE(共用快取資料夾)、W_BIN_MIRROR(鏡像, 本地資料夾或http(s)網址)、W_BIN_OFFLINE(1為離線), 見README〈外部執行檔〉</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="ensureBins.mjs.html">ensureBins.mjs</a>, <a href="ensureBins.mjs.html#line19">line 19</a>
     </li></ul></dd>
     
 
@@ -750,24 +877,76 @@ test()
 
 
 
-    <h5 class="h5-examples">Example</h5>
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
     
-    <pre class="prettyprint"><code>import autoDownloadFiles from 'w-html2docx/src/autoDownloadFiles.mjs'
 
-async function test() {
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
 
-    //autoDownloadFiles, 無htmlToDocx.exe時自動下載, 下載失敗則reject
-    let { fpExe } = await autoDownloadFiles()
+        <th>Type</th>
 
-    console.log('fpExe', fpExe)
-    // fpExe D:\xxx\node_modules\w-html2docx\src\htmlToDocx.exe
-}
-test()
-    .catch((err) => {
-        console.log('catch', err)
-    })</code></pre>
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
 
 
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入設定物件, 交wsemi之fsEnsureBins(names、cacheDir、mirror、offline、onProgress等), pkgRoot固定為本套件根</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
 
 
 
@@ -788,7 +967,7 @@ test()
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳執行檔路徑物件，內含fpExe為htmlToDocx.exe的絕對路徑字串，reject回傳錯誤訊息</p>
+    <p>回傳Promise, resolve回傳{ [檔名]: 絕對路徑 }, reject回傳帶code之Error(E_OFFLINE_MISSING等)</p>
 </div>
 
 
@@ -830,7 +1009,7 @@ test()
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Oct 25 2026 22:59:55 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Oct 28 2026 21:58:57 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

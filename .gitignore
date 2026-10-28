@@ -9,4 +9,5 @@ tmp
 srcPython/build
 srcPython/dist
 test/_tmp
+/bin-cache/
 

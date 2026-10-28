@@ -2,6 +2,10 @@ node_modules
 srcPython/build
 srcPython/dist
 src/htmlToDocx.exe
+/bin/*
+!/bin/manifest.json
+/bin-cache/
+/test/_tmp/
 .agents
 .opencode
 .claude
@@ -9,3 +13,4 @@ CLAUDE*.md
 AGENTS*.md
 .env
 tmp
+sgud

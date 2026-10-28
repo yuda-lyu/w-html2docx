@@ -13,10 +13,13 @@ import execProcess from 'wsemi/src/execProcess.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
-import autoDownloadFiles from './autoDownloadFiles.mjs'
+import ensureBins from './ensureBins.mjs'
 
 
 let fdSrv = path.resolve()
+
+//fnExe, 轉檔器名稱(bin/manifest.json之name)
+let fnExe = 'htmlToDocx.exe'
 
 
 function isWindows() {
@@ -27,7 +30,7 @@ function isWindows() {
 /**
  * Html檔轉Docx檔
  *
- * 轉檔由套件內之htmlToDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。htmlToDocx.exe若不存在(安裝時npm封鎖scripts致postinstall未執行)會於轉檔當下自動下載，下載失敗則reject並帶網址與落點。
+ * 轉檔由htmlToDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。htmlToDocx.exe不含於npm包，首次轉檔時經ensureBins自GitHub(釘選提交)或環境變數W_BIN_MIRROR之鏡像取得，以bin/manifest.json之SHA-256與大小校驗後存於快取(預設為套件根之bin-cache/，可由W_BIN_CACHE改位置)，之後自快取取得(亦校驗)；環境變數W_BIN_OFFLINE=1時不連網。取得失敗則reject字串，內含錯誤代碼(如E_OFFLINE_MISSING、E_HASH_MISMATCH)與原因，詳見README〈外部執行檔〉
  * 轉檔器內部失敗(Word未安裝、模板無法開啟、另存失敗等)一律reject並帶轉檔器回報之原因；resolve前另確認輸出檔已產生且非空。輸出資料夾不存在時自動建立
  *
  * @param {String} fpInHtml 輸入來源Html檔位置字串
@@ -166,9 +169,19 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
         }
     }
 
-    //prog, 自動定位htmlToDocx.exe, 無檔案(安裝時npm封鎖scripts致postinstall未執行)則自動下載
-    let { fpExe } = await autoDownloadFiles()
-    let prog = fpExe
+    //prog, 經ensureBins取得htmlToDocx.exe(快取命中亦校驗, 未命中則自鏡像或GitHub取得並校驗), 本函數以字串reject, 故將帶code之Error轉為字串
+    let prog = ''
+    let errBin = null
+    await ensureBins({ names: fnExe })
+        .then((r) => {
+            prog = r[fnExe]
+        })
+        .catch((err) => {
+            errBin = `${isestr(get(err, 'code')) ? `[${err.code}] ` : ''}${isestr(get(err, 'message')) ? err.message : String(err)}`
+        })
+    if (errBin) {
+        return Promise.reject(errBin)
+    }
     // console.log('prog', prog)
 
     //inp
@@ -211,6 +224,10 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
 
     return 'ok'
 }
+
+
+//ensureBins, 以靜態屬性提供(不另加具名匯出, 使UMD打包後default匯出形態不變): 供部署前預先取得htmlToDocx.exe, 見README〈外部執行檔〉
+WHtml2docx.ensureBins = ensureBins
 
 
 export default WHtml2docx

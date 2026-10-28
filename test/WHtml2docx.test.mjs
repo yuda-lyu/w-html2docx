@@ -5,6 +5,8 @@ import w from 'wsemi'
 import assert from 'assert'
 import { unzipSync, strFromU8 } from 'fflate'
 import WHtml2docx from '../src/WHtml2docx.mjs'
+import ensureBins from '../src/ensureBins.mjs'
+import { setBinEnv } from './tools/binEnv.mjs'
 import { genTallPng, genGridTemplate, genFigureHtml, getImgHeights, getFigurePages } from './tools/imgHeightFixture.mjs'
 
 
@@ -94,8 +96,12 @@ describe('WHtml2docx', function() {
     let xml = null
     let ps = null
 
+    //restoreBinEnv, htmlToDocx.exe自本機鏡像(取自repo內bin/)取得, 不連外網
+    let restoreBinEnv = null
+
     before(async function() {
         this.timeout(60000)
+        restoreBinEnv = setBinEnv('WHtml2docx-bin')
         await WHtml2docx(fpIn, fpOut, opt)
         xml = getDocumentXml(fpOut)
         ps = getParagraphs(xml)
@@ -103,6 +109,7 @@ describe('WHtml2docx', function() {
 
     after(function() {
         w.fsDeleteFile(fpOut)
+        restoreBinEnv()
     })
 
     it('convert', function() {
@@ -253,6 +260,45 @@ describe('WHtml2docx input checks', function() {
         assert.strict.deepEqual(false, w.fsIsFolder('./test/_tmp/WHtml2docx')) //於檢查階段即reject, 不會建立輸出資料夾
     })
 
+    it('htmlToDocx.exe取不到(離線且無快取無鏡像)時reject字串並含錯誤代碼與檔名, 不啟動轉檔器', async function() {
+        //規格T6/E2: 轉檔器經ensureBins取得, 離線缺檔為E_OFFLINE_MISSING; 本函數以字串reject(沿用既有契約)
+        let fdTmp = path.resolve('./test/_tmp/WHtml2docx-offline')
+        let fpOut2 = `${fdTmp}/out/ztmp.docx`
+        let keys = ['W_BIN_MIRROR', 'W_BIN_CACHE', 'W_BIN_OFFLINE']
+        let bk = {}
+        for (let k of keys) {
+            bk[k] = process.env[k]
+            delete process.env[k]
+        }
+        process.env.W_BIN_OFFLINE = '1'
+        process.env.W_BIN_CACHE = path.join(fdTmp, 'cache')
+        let err = null
+        try {
+            await WHtml2docx('./test/ztmp.html', fpOut2)
+                .catch((e) => {
+                    err = e
+                })
+        }
+        finally {
+            for (let k of keys) {
+                if (bk[k] === undefined) {
+                    delete process.env[k]
+                }
+                else {
+                    process.env[k] = bk[k]
+                }
+            }
+        }
+        let existOut = fs.existsSync(fpOut2)
+        fs.rmSync(fdTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        try {
+            fs.rmdirSync(path.resolve('./test/_tmp')) //尚有其他測試之暫存時非空, 略過
+        }
+        catch (e) {}
+        assert.strict.deepEqual(true, typeof err === 'string' && err.includes('[E_OFFLINE_MISSING]') && err.includes('htmlToDocx.exe'), String(err))
+        assert.strict.deepEqual(false, existOut) //未啟動轉檔器, 無輸出
+    })
+
 })
 
 
@@ -289,7 +335,11 @@ describe('WHtml2docx imgHeightReserveLines', function() {
         assert.strict.deepEqual([], rsErr, `expect ${hExpect}, got ${hs.join(',')}`)
     }
 
+    //restoreBinEnv, htmlToDocx.exe自本機鏡像(取自repo內bin/)取得, 不連外網
+    let restoreBinEnv = null
+
     before(function() {
+        restoreBinEnv = setBinEnv('WHtml2docx-imgHeight-bin')
         fs.rmSync(fdTmp, { recursive: true, force: true })
         fs.mkdirSync(fdTmp, { recursive: true })
         genGridTemplate(path.resolve('./src/tmp.docx'), fpTempGrid)
@@ -297,6 +347,7 @@ describe('WHtml2docx imgHeightReserveLines', function() {
     })
 
     after(function() {
+        restoreBinEnv()
         fs.rmSync(fdTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
         try {
             fs.rmdirSync(path.resolve('./test/_tmp')) //尚有其他測試之暫存時非空, 略過
@@ -352,10 +403,11 @@ describe('WHtml2docx imgHeightReserveLines', function() {
         assertHeights(fp, ((nLines - 3) * pitch - 0.5) * 0.5)
     })
 
-    it('舊版呼叫端(轉檔器輸入不含imgHeightReserveLines)照常轉檔, 沿用預設上限', function() {
+    it('舊版呼叫端(轉檔器輸入不含imgHeightReserveLines)照常轉檔, 沿用預設上限', async function() {
         this.timeout(180000)
 
-        //轉檔器一律自master下載, 舊版套件亦執行新版轉檔器, 故轉檔器須容許輸入缺此鍵
+        //轉檔器自master取得, 舊版套件亦執行新版轉檔器, 故轉檔器須容許輸入缺此鍵; 以ensureBins校驗後之路徑(新版實際執行者)為準
+        let fpExe = (await ensureBins({ names: 'htmlToDocx.exe' }))['htmlToDocx.exe']
         let fpOut = path.resolve(fdTmp, 'grid-oldcaller.docx')
         let inp = {
             fpInSrc: fpHtml,
@@ -365,7 +417,7 @@ describe('WHtml2docx imgHeightReserveLines', function() {
             imgRatioWidthMax: 1,
             imgRatioHeightMax: 1,
         }
-        let sp = spawnSync(path.resolve('./src/htmlToDocx.exe'), [Buffer.from(JSON.stringify(inp), 'utf8').toString('base64')], { windowsHide: true, timeout: 170000 })
+        let sp = spawnSync(fpExe, [Buffer.from(JSON.stringify(inp), 'utf8').toString('base64')], { windowsHide: true, timeout: 170000 })
         assert.strict.deepEqual(0, sp.status, String(sp.stdout))
         assert.strict.deepEqual('success', String(sp.stdout).trim())
         assertHeights(fpOut, hDefault)

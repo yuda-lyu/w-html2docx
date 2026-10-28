@@ -1,41 +1,31 @@
-import path from 'path'
-import fsIsFile from 'wsemi/src/fsIsFile.mjs'
-import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
-import downloadFiles from './downloadFiles.mjs'
+import ensureBins from './ensureBins.mjs'
 
 
-//fnExe, htmlToDocx執行檔名稱
+//fnExe, htmlToDocx執行檔名稱(bin/manifest.json之name)
 let fnExe = 'htmlToDocx.exe'
 
 
-//pmDownload, 下載中之Promise, 供併發呼叫共用同一次下載, 避免同時多次下載寫入同一批檔案
-let pmDownload = null
-
-
 /**
- * 自動定位htmlToDocx.exe，若無檔案則自動下載，回傳htmlToDocx.exe的絕對路徑
+ * 取得htmlToDocx.exe的絕對路徑，保留作為舊版對外匯入點之相容層，實際改由ensureBins取得
  *
- * 依序偵測當前工作路徑的src/與node_modules/w-html2docx/src/，皆無htmlToDocx.exe時，
- * 代表安裝時npm封鎖scripts致postinstall未執行，故自動調用downloadFiles重新下載
+ * 舊版於當前工作路徑的src/與node_modules/w-html2docx/src/查找，缺檔時自主幹下載且不校驗；現改經ensureBins：首次使用時自GitHub(釘選提交)或環境變數W_BIN_MIRROR之鏡像取得，以bin/manifest.json之SHA-256與大小校驗後存於快取(預設為套件根之bin-cache/，可由W_BIN_CACHE改位置)，之後自快取取得(亦校驗)，故回傳之路徑位於快取而非src/。不在安裝時下載
  *
- * 下載係先寫入暫存檔`htmlToDocx.exe.download`，完成後才改名為htmlToDocx.exe，故下載中途斷線或程序被終止時不會留下截斷之htmlToDocx.exe，下次呼叫會重新下載；
- * 下載失敗(斷網、代理不可達、非2xx回應、中途斷線)時reject字串`failed to download url[網址] to file[落點]: 原因`
- *
- * 供w-html2docx自身與其他依賴w-html2docx的套件調用，無須各自實作偵測與下載邏輯
+ * 新程式碼請直接調用ensureBins(`w-html2docx/src/ensureBins.mjs`或`WHtml2docx.ensureBins`)
  *
  * 因htmlToDocx.exe只能用於Windows作業系統，故調用前須自行檢核作業系統
  *
- * @returns {Promise} 回傳Promise，resolve回傳執行檔路徑物件，內含fpExe為htmlToDocx.exe的絕對路徑字串，reject回傳錯誤訊息
+ * @deprecated 改用ensureBins
+ * @returns {Promise} 回傳Promise，resolve回傳執行檔路徑物件，內含fpExe為htmlToDocx.exe的絕對路徑字串，reject回傳帶code之Error(如E_OFFLINE_MISSING、E_HASH_MISMATCH)
  * @example
  * import autoDownloadFiles from 'w-html2docx/src/autoDownloadFiles.mjs'
  *
  * async function test() {
  *
- *     //autoDownloadFiles, 無htmlToDocx.exe時自動下載, 下載失敗則reject
+ *     //autoDownloadFiles, 經ensureBins取得並校驗htmlToDocx.exe, 取不到則reject
  *     let { fpExe } = await autoDownloadFiles()
  *
  *     console.log('fpExe', fpExe)
- *     // fpExe D:\xxx\node_modules\w-html2docx\src\htmlToDocx.exe
+ *     // fpExe D:\xxx\node_modules\w-html2docx\bin-cache\<sha256>\htmlToDocx.exe
  * }
  * test()
  *     .catch((err) => {
@@ -44,57 +34,9 @@ let pmDownload = null
  *
  */
 async function autoDownloadFiles() {
-
-    //fdSrv, 於調用時取當前工作路徑
-    let fdSrv = path.resolve()
-
-    //fdBaseSelf, fdBaseNM, htmlToDocx.exe可能所在資料夾(開發套件本身時於cwd的src/, 被安裝為相依套件時於node_modules/w-html2docx/src/)
-    let fdBaseSelf = `${fdSrv}/src/`
-    let fdBaseNM = `${fdSrv}/node_modules/w-html2docx/src/`
-
-    //fdBase
-    let fdBase = ''
-    if (fsIsFile(`${fdBaseSelf}${fnExe}`)) {
-        fdBase = fdBaseSelf
-    }
-    else if (fsIsFile(`${fdBaseNM}${fnExe}`)) {
-        fdBase = fdBaseNM
-    }
-    else {
-
-        //fdBaseDL, 下載落點, 有node_modules/w-html2docx/代表為被安裝之相依套件, 否則為套件自身
-        let fdBaseDL = fsIsFolder(`${fdSrv}/node_modules/w-html2docx/`) ? fdBaseNM : fdBaseSelf
-
-        //downloadFiles, 無htmlToDocx.exe代表安裝時npm封鎖scripts致postinstall未執行, 故於此重新執行下載,
-        //併發呼叫共用同一個下載Promise, 避免重複下載
-        if (pmDownload === null) {
-            pmDownload = downloadFiles(fdBaseDL)
-                .finally(() => {
-
-                    //下載結束(成敗皆然)歸零, 使下次呼叫重新依檔案是否存在判定; 若只於失敗時歸零, 下載成功後檔案被移除(重裝套件、防毒隔離)或程序切換工作路徑時, 會沿用已resolve之Promise而不再下載
-                    pmDownload = null
-
-                })
-        }
-        await pmDownload
-
-        //check
-        if (fsIsFile(`${fdBaseDL}${fnExe}`)) {
-            fdBase = fdBaseDL
-        }
-
-    }
-
-    //check
-    if (fdBase === '') {
-        return Promise.reject(`can not find ${fnExe} in [${fdBaseSelf}] or [${fdBaseNM}]`)
-    }
-
-    //fpExe
-    let fpExe = path.resolve(fdBase, fnExe)
-
+    let bins = await ensureBins({ names: fnExe })
     return {
-        fpExe,
+        fpExe: bins[fnExe],
     }
 }
 

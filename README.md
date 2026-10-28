@@ -61,3 +61,29 @@ test()
 3. **模板settings會帶入輸出文件**：模板`word/settings.xml`內之文件層級設定，轉檔後會保留於輸出docx。
 4. **建議帶入停用影像壓縮旗標**：模板`word/settings.xml`須含`<w:doNotAutoCompressPictures/>`，否則Word轉檔時會將寬圖(約超過1270px)自動降採樣至220ppi並轉存JPEG，導致圖內文字模糊。套件內建模板已含此旗標；外部模板可於Word開啟模板後，勾選[檔案 > 選項 > 進階 > 影像大小和品質 > 不壓縮檔案中的影像]再存檔，或直接編輯`word/settings.xml`加入該元素。
 5. **行格線模板之圖名預留**：模板設有文件格線(如[版面配置 > 版面設定 > 文件格線 > 只指定行的格線])時，Word會把每段之高度進位為行距之整數倍，整頁高之圖片進位後常擠掉其下之圖名。此時可給`opt.imgHeightReserveLines`(預留格數)，圖片最大高度改為`(每頁格數－預留格數)×行距－0.5點`，行距取模板文件格線之行距，每頁格數為版心高÷行距之整數部分。例如行距18點、A4上下邊界各72點之模板每頁38格，圖區塊間有1行間隔段、圖名至多2行時至少給3，建議給4多留1格餘裕；14pt之標楷體每行佔2格，須依實際所佔格數加計。模板無文件格線時此設定不生效，圖片最大高度維持版心高×0.937043054427296×`opt.imgRatioHeightMax`。
+
+## 外部執行檔
+
+本套件轉檔時需要下列外部執行檔，不含於npm包：
+
+| 檔名 | 用途 | 來源 |
+|---|---|---|
+| htmlToDocx.exe | 調用本機Microsoft Word(win32com)將Html轉為Docx | 本套件GitHub repo之`bin/`(釘選提交) |
+
+- 首次轉檔時自動下載(或預先呼叫本套件匯出之`ensureBins()`)，以`bin/manifest.json`所載之SHA-256與大小校驗後存於`<套件根>/bin-cache/`；之後自快取取得(亦校驗)。安裝時不下載。
+- 環境變數：
+  - `W_BIN_CACHE=<資料夾>`：快取改放`<資料夾>/w-html2docx/`(套件所在之`node_modules`唯讀時使用，多套件可共用同一資料夾)。
+  - `W_BIN_MIRROR=<資料夾或http(s)網址>`：內網鏡像，先找鏡像再連GitHub；結構為`<鏡像>/w-html2docx/<sha256>/htmlToDocx.exe`。鏡像之檔同樣以清單校驗，不符即不用。
+  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像；缺檔時錯誤(`E_OFFLINE_MISSING`)會列出缺哪些檔、sha256、大小與應放之完整路徑。
+- 離線部署：
+  1. 在可連網之電腦設`W_BIN_CACHE=<空資料夾>`，呼叫本套件之`ensureBins()`一次(或轉檔一次)。
+  2. 把該資料夾整個帶到內網電腦，設`W_BIN_MIRROR=<該資料夾>`(全離線時另設`W_BIN_OFFLINE=1`)。
+- `WHtml2docx()`取不到執行檔時reject字串(含錯誤代碼，如`[E_OFFLINE_MISSING]`、`[E_HASH_MISMATCH]`)；直接呼叫`ensureBins()`(`WHtml2docx.ensureBins`或`w-html2docx/src/ensureBins.mjs`)則reject帶`code`之Error。
+
+```alias
+import WHtml2docx from 'w-html2docx'
+
+//部署前預先取得, 回傳{ 'htmlToDocx.exe': 絕對路徑 }
+let bins = await WHtml2docx.ensureBins()
+console.log(bins['htmlToDocx.exe'])
+```
