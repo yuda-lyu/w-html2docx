@@ -87,7 +87,7 @@ function genFigureHtml(b64, n = 4) {
     let zwsp = '&#8203;'
     let blocks = []
     for (let i = 1; i <= n; i++) {
-        blocks.push(`<div style="padding:2rem 0; text-align:center;"><img src="data:image/png;base64,${b64}" style="width:100%; max-width:700px;"><div style="padding-top:0.5rem;">圖${i} 用過核子燃料最終處置資訊展示網站之首頁設計稿，含導覽列、主視覺、最新消息、計畫沿革、各階段成果展示與頁尾聯絡資訊之完整版面配置示意</div></div>`)
+        blocks.push(`<div style="padding:2rem 0; text-align:center;"><img src="data:image/png;base64,${b64}" style="width:100%; max-width:700px;"><div style="padding-top:0.5rem;">圖${i} 某機關公共服務整合與資訊展示網站之首頁設計稿，含導覽列、主視覺、最新消息、計畫沿革、各階段成果展示與頁尾聯絡資訊之完整版面配置示意</div></div>`)
         if (i < n) {
             blocks.push(`<div style="text-align:center;" data-for="br">${zwsp}</div>`)
         }
