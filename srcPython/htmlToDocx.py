@@ -190,10 +190,13 @@ def embedLinkedPictures(doc):
 
 def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
 
-    #Open, 開啟之文件推入docs, 供htmlToDocx於finally關閉
-    docInTemp = app.Documents.Open(fpInTemp)
+    #Open, 開啟之文件推入docs, 供htmlToDocx於finally以closeOwnWord關閉
+    #  以唯讀開啟(Open之參數依序為FileName, ConfirmConversions, ReadOnly): 本轉檔器只SaveAs2至fpOut, 不存回模板與來源;
+    #  惟fpOut即該檔時(如以輸出覆寫模板)須可寫開啟, 否則Word拒絕另存回原路徑(實測), 與改前行為相同
+    #why: 各轉檔各自一個Word實例, 兩個轉檔同時以可寫方式開同一模板(如內建模板)或同一html時, 後開者跳出「檔案使用中」對話框而停住(實測)
+    docInTemp = app.Documents.Open(fpInTemp, False, not isSamePath(fpInTemp, fpOut))
     docs.append(docInTemp)
-    docInSrc = app.Documents.Open(fpInSrc)
+    docInSrc = app.Documents.Open(fpInSrc, False, not isSamePath(fpInSrc, fpOut))
     docs.append(docInSrc)
 
     # 取得來源文件全文 Range（含格式）
@@ -400,39 +403,95 @@ def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
     docInTemp.SaveAs2(fpOut, WdSaveFormat)
 
 
-def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
-
-    #Dispatch
-    app = wc.Dispatch('Word.Application')
-
-    #正式版須隱藏
-    app.Visible = False
-
-    #不詢問使用者
-    app.DisplayAlerts = False
-
-    #docs, 已開啟之文件, 由htmlToDocxCore推入
-    docs = []
-
-    #任一步驟例外時亦須關閉已開啟之文件並結束Word, 否則殘留之WINWORD會鎖住模板與輸出檔, 使後續轉檔失敗
+def isSamePath(fp1, fp2):
+    #兩路徑是否為同一檔(大小寫, 相對路徑, 符號連結與短檔名皆正規化); 無法判定時視為不同
+    import os
     try:
-        htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt)
-    finally:
+        return os.path.normcase(os.path.realpath(fp1)) == os.path.normcase(os.path.realpath(fp2))
+    except:
+        return False
 
-        # Close
-        WdDoNotSaveChanges = 0 #wdDoNotSaveChanges
-        for doc in reversed(docs):
-            try:
-                doc.Close(WdDoNotSaveChanges)
-            except:
-                pass
 
-        #Quit
-        WdSaveOptions = 0 #wdDoNotSaveChanges=0(不儲存擱置中變更) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveoptions
+def countOtherDocs(app, docsLeft):
+    #實例內非本行程之文件數, 含受保護檢視之視窗(其不在Documents內); docsLeft為本行程關閉失敗而仍開著者, 以COM物件身分比對(不以路徑: 他人可能重開同一路徑)
+    #回傳(數量, 狀態): 狀態'ok'為已判定, 'gone'為實例已不存在(如已被他人Quit), 'unknown'為無法判定(忙碌或讀取失敗)
+    import time
+    import pythoncom
+
+    #實例已不存在之錯誤: RPC_S_SERVER_UNAVAILABLE, RPC_S_CALL_FAILED, RPC_E_DISCONNECTED
+    hrsGone = (-2147023174, -2147023170, -2147417848)
+
+    for i in range(10):
         try:
-            app.Quit(WdSaveOptions)
+            try:
+                n = app.ProtectedViewWindows.Count
+            except AttributeError:
+                n = 0 #無此集合之Word版本
+            for d in app.Documents:
+                if not any(d == o for o in docsLeft):
+                    n += 1
+            return n, 'ok'
+        except pythoncom.com_error as e:
+            if getattr(e, 'hresult', None) in hrsGone:
+                return 0, 'gone'
         except:
             pass
+        time.sleep(0.5) #他人呼叫中(忙碌)等暫時失敗, 稍候重試
+    return None, 'unknown'
+
+
+def closeOwnWord(app, docs):
+    #關閉本行程開啟之文件, 再結束本行程所開之Word實例; 實例內另有他人之文件或無法判定時不結束
+    #why: DispatchEx所開之實例仍登錄於ROT, 他行程以Dispatch(先GetActiveObject)可連上並於其中開文件(實測), 此時Quit會關掉對方之文件且不儲存;
+    #  連上者(舊寫法)用畢自會Quit, 故保留實例; 無法判定時亦保留(寧可留下實例, 不關他人之文件); 盤點與Quit之間他人仍可連入, 此窗口無法消除
+
+    #Close, 關閉失敗者仍屬本行程
+    WdDoNotSaveChanges = 0 #wdDoNotSaveChanges
+    docsLeft = []
+    for doc in reversed(docs):
+        try:
+            doc.Close(WdDoNotSaveChanges)
+        except:
+            docsLeft.append(doc)
+
+    #nOther
+    nOther, st = countOtherDocs(app, docsLeft)
+    if st == 'gone':
+        return
+    if st != 'ok' or nOther > 0:
+        print('Word instance is kept since ' + (f'{nOther} document(s) opened by another client' if st == 'ok' else 'its documents can not be checked'), file=sys.stderr)
+        return
+
+    #Quit
+    WdSaveOptions = 0 #wdDoNotSaveChanges=0(不儲存擱置中變更) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveoptions
+    try:
+        app.Quit(WdSaveOptions)
+    except:
+        pass
+
+
+def htmlToDocx(fpInSrc, fpInTemp, fpOut, opt):
+
+    #DispatchEx, 每次另開獨立之Word實例(CoCreateInstanceEx, 實測已有其他Word時亦另起WINWORD)
+    #why: Dispatch會先以GetActiveObject連上已在執行之Word(他行程之轉檔或使用者開啟者), 轉完Quit即關掉對方之文件且不儲存, 兩邊同時轉檔則互相失敗
+    app = wc.DispatchEx('Word.Application')
+
+    #docs, 本行程開啟之文件, 由htmlToDocxCore推入
+    docs = []
+
+    #任一步驟(含下列設定)例外時亦須關閉已開啟之文件並結束本行程所開之Word, 否則殘留之WINWORD會鎖住模板與輸出檔, 使後續轉檔失敗
+    try:
+
+        #正式版須隱藏
+        app.Visible = False
+
+        #不詢問使用者
+        app.DisplayAlerts = False
+
+        htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt)
+
+    finally:
+        closeOwnWord(app, docs)
 
 
 def core(b64):

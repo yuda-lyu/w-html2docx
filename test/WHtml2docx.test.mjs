@@ -10,6 +10,7 @@ import ensureBins from '../src/ensureBins.mjs'
 import { setBinEnv } from './tools/binEnv.mjs'
 import { genTallPng, genGridTemplate, genFigureHtml, getImgHeights, getFigurePages } from './tools/imgHeightFixture.mjs'
 import { LINK_CASES, genLinkCases, genHtml, genLinkHtml, getDocxPictures } from './tools/imgLinkFixture.mjs'
+import { sleep, wordPids, isAutomationWord, waitWordGone, killNewAutomationWords, clearDisabledItems, startHeldWord, startBorrower, startVisibleWordWatch, startHoldServer } from './tools/wordInstance.mjs'
 
 
 function isWindows() {
@@ -649,6 +650,364 @@ describe('WHtml2docx local pictures', function() {
         let fpHtml2 = genHtml(`<p>http</p><p><img src="http://127.0.0.1:${port}/nope.png"></p>`, path.join(fx.fdHtml, 'http-404.html'))
         let err = await convErr('http-404', fpHtml2)
         assert.strict.deepEqual(true, err.includes(`unresolved linked picture: http://127.0.0.1:${port}/nope.png`), err)
+    })
+
+})
+
+
+describe('WHtml2docx Word instance isolation', function() {
+
+    //check
+    if (!isWindows()) {
+        return
+    }
+
+    //規格: 主控排程第408項(hd408, 2026-11-10, 源自下游w-md2docx之調查): 轉檔器每次另開獨立之Word實例(DispatchEx), 只結束本行程所開者
+    //  ①他行程已開之Word(含其未存內容)不被借用, 不被結束; ②兩行程並行轉檔(同時, 錯開1.5秒, 交錯)皆成功;
+    //  ③例外路徑(轉檔失敗, 來源或模板開啟失敗)亦只結束自己之實例且不殘留WINWORD; ④本行程之實例被他行程(舊寫法Dispatch)連上並開文件時, 轉完不結束該實例
+    //  他行程之Word以PowerShell經COM扮演(見tools/wordInstance.mjs), 一律隱藏; 本組須在無其他Word時執行(見before)
+
+    let fdTmp = path.resolve('./test/_tmp/WHtml2docx-word')
+    let fdOut = path.join(fdTmp, 'out')
+
+    //png, 1×1之PNG, 由扣住點伺服器回傳
+    let png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+
+    //pre, 本組開始時已存在之WINWORD(須為空, 見before); null為本組未執行(略過或初始化前失敗), 此時after不結束任何WINWORD
+    let pre = null
+
+    //restoreBinEnv, htmlToDocx.exe自本機鏡像(取自repo內bin/)取得, 不連外網
+    let restoreBinEnv = null
+
+    //watch, 可見Word視窗之監看(規格: 不得開啟可見之Word視窗)
+    let watch = null
+
+    let fpStopOf = (name) => {
+        return path.join(fdTmp, `${name}.stop`)
+    }
+
+    let genPage = (name, body) => {
+        let fp = path.join(fdTmp, `${name}.html`)
+        fs.writeFileSync(fp, `<html><head><meta charset="utf-8"></head><body>${body}</body></html>`, 'utf8')
+        return fp
+    }
+
+    //genHoldHtml, 含一張自扣住點伺服器取得之圖片: Word匯入時向伺服器取圖, 伺服器扣住期間即為「轉檔進行中」之確定時點
+    let genHoldHtml = (name, url) => {
+        return genPage(name, `<h1>Word instance ${name}</h1><p>hold</p><p><img src="${url}"></p>`)
+    }
+
+    //conv, 轉檔並回傳{ ok, err, fpOut }, 不拋錯
+    let conv = async (fpHtml, name) => {
+        let fpOut = path.join(fdOut, `${name}.docx`)
+        let r = { ok: false, err: '', fpOut }
+        await WHtml2docx(fpHtml, fpOut)
+            .then((v) => {
+                r.ok = v === 'ok'
+            })
+            .catch((e) => {
+                r.err = String(e)
+            })
+        return r
+    }
+
+    //untilHold, 等轉檔進行到Word向伺服器取圖; 轉檔先結束者回傳false
+    let untilHold = async (srv, p) => {
+        return Promise.race([srv.firstRequest().then(() => true), p.then(() => false)])
+    }
+
+    //newPids, 本組開始後新出現之WINWORD
+    let newPids = () => {
+        return wordPids().filter((v) => !pre.includes(v))
+    }
+
+    //assertHeldIntact, H於轉檔後仍在, 其後連續2次讀取皆為文件數1且未存文字不變, 自始無讀取失敗
+    let assertHeldIntact = async (h) => {
+        let i = h.lines.length
+        for (let k = 0; k < 2; k++) {
+            let { i: j, line } = await h.waitLine(/^(DOCS|ERR)/, i)
+            assert.strict.deepEqual(`DOCS 1 ${h.text}`, line)
+            i = j + 1
+        }
+        assert.strict.deepEqual([], h.lines.filter((v) => /^(ERR|STDERR|SPAWNERR)/.test(v)))
+        assert.strict.deepEqual(true, wordPids().includes(h.pid), `held WINWORD ${h.pid}`)
+    }
+
+    //assertNoVisible, 規格: 自監看第iw行起無可見之Word視窗(等監看再完成一輪後判定)
+    let assertNoVisible = async (iw) => {
+        assert.strict.deepEqual([], await watch.visibleSince(iw))
+    }
+
+    before(async function() {
+        this.timeout(120000)
+
+        //前一組之轉檔器所開之Word可能仍在結束中
+        await waitWordGone(wordPids().filter(isAutomationWord), 30000)
+
+        //有其他Word(含使用者開啟者)時不跑本組: 修前(Dispatch)之轉檔器會借用並以不儲存結束之; ④之他行程以GetActiveObject連上時亦無法確定連上本行程之實例
+        let pids = wordPids()
+        if (pids.length > 0) {
+            console.log(`skip [Word instance isolation]: other WINWORD is running(${pids.join(',')})`)
+            this.skip()
+        }
+        pre = pids
+
+        restoreBinEnv = setBinEnv('WHtml2docx-word-bin')
+
+        //並行轉檔前先取得轉檔器至快取, 免兩個轉檔同時寫快取
+        await WHtml2docx.ensureBins()
+
+        fs.rmSync(fdTmp, { recursive: true, force: true })
+        fs.mkdirSync(fdOut, { recursive: true })
+
+        //先前被強制結束之Word所留下、指向本套件檔案之停用項目, 會使開檔跳出可見訊息框而停住, 先清除
+        let rd = clearDisabledItems(path.resolve('.'))
+        if (rd.removed.length > 0 || rd.failed.length > 0) {
+            console.log(`Word disabled items under this package: ${JSON.stringify(rd)}`)
+        }
+
+        watch = await startVisibleWordWatch(fpStopOf('watch'))
+    })
+
+    after(async function() {
+        this.timeout(60000)
+        if (watch) {
+            await watch.stop()
+        }
+
+        //收尾: 只結束本組新出現且經COM自動化啟動之WINWORD(各案已斷言不殘留, 此處為失敗時之清理); 有強制結束者再清其可能留下之停用項目
+        if (pre !== null) {
+            let rk = await killNewAutomationWords(pre)
+            if (rk.killed.length > 0) {
+                let rd = clearDisabledItems(path.resolve('.'))
+                console.log(`cleanup: killed WINWORD ${JSON.stringify(rk)}, Word disabled items ${JSON.stringify(rd)}`)
+            }
+        }
+        if (restoreBinEnv) {
+            restoreBinEnv()
+        }
+        fs.rmSync(fdTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        try {
+            fs.rmdirSync(path.resolve('./test/_tmp')) //尚有其他測試之暫存時非空, 略過
+        }
+        catch (err) {}
+    })
+
+    it('①他行程已開之Word(含未存文件)不被借用亦不被結束: 轉檔期間另起WINWORD, 轉完原實例仍在且文件數與未存文字不變, 轉檔器之WINWORD不殘留', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let h = await startHeldWord(fpStopOf('held1'))
+        let srv = await startHoldServer(png)
+        try {
+            let p = conv(genHoldHtml('held1', srv.url), 'held1')
+            assert.strict.deepEqual(true, await untilHold(srv, p), 'conversion ended before Word requested the picture')
+            let during = newPids()
+            srv.release()
+            let r = await p
+
+            //規格①: 轉檔成功, 輸出含來源內容
+            assert.strict.deepEqual(true, r.ok, r.err)
+            assert.strict.deepEqual(true, getDocumentXml(r.fpOut).includes('Word instance held1'))
+
+            //規格①: 轉檔進行中有H以外之WINWORD, 即轉檔器另起之實例(未借用H)
+            let mine = during.filter((v) => v !== h.pid)
+            assert.strict.deepEqual(true, during.includes(h.pid) && mine.length >= 1, JSON.stringify({ during, held: h.pid }))
+
+            //規格①: 轉完H仍在, 文件數與未存文字不變
+            await assertHeldIntact(h)
+
+            //規格③: 轉檔器所開之WINWORD轉完即結束
+            assert.strict.deepEqual([], await waitWordGone(mine))
+        }
+        finally {
+            await srv.close()
+            await h.stop()
+        }
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+
+        //規格: 不得開啟可見之Word視窗
+        await assertNoVisible(iw)
+    })
+
+    it('③例外路徑亦只結束自己之實例: 圖片無法解析、來源開啟失敗、模板開啟失敗皆回報錯誤且不產生輸出檔, 他行程之Word仍在且文件不變, 轉檔器之WINWORD不殘留', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let h = await startHeldWord(fpStopOf('held3'))
+        try {
+
+            //(a)轉檔失敗: 圖檔不存在, 兩份文件皆已開啟後拋LinkedPictureError
+            let fpNo = path.join(fdTmp, 'no-such-picture.png')
+            let fpHtml = genPage('fail-picture', `<p>fail</p><p><img src="${fpNo}"></p>`)
+            let ra = await conv(fpHtml, 'fail-picture')
+            assert.strict.deepEqual(false, ra.ok)
+            assert.strict.deepEqual(true, ra.err.includes(`unresolved linked picture: ${fpNo}`), ra.err)
+            assert.strict.deepEqual(false, fs.existsSync(ra.fpOut))
+
+            //規格③: 每一例外之後他行程之Word皆仍在且文件不變
+            await assertHeldIntact(h)
+
+            //(b)來源開啟失敗, (c)模板開啟失敗: 直接呼叫轉檔器(略過WHtml2docx之存在檢查), 轉檔器以非0離開碼回報error, 訊息為Word找不到該檔(含其路徑)
+            let prog = (await WHtml2docx.ensureBins())['htmlToDocx.exe']
+            let base = {
+                fpInSrc: fpHtml,
+                fpInTemp: path.resolve('./src/tmp.docx'),
+                fpOut: path.join(fdOut, 'fail-open.docx'),
+                fontFamilies: ['標楷體', 'Times New Roman'],
+                imgRatioWidthMax: 1,
+                imgRatioHeightMax: 1,
+                imgHeightReserveLines: null,
+            }
+            for (let [inp, fn] of [[{ ...base, fpInSrc: path.join(fdTmp, 'no-such.html') }, 'no-such.html'], [{ ...base, fpInTemp: path.join(fdTmp, 'no-such-temp.docx') }, 'no-such-temp.docx']]) {
+                let rb = spawnSync(prog, [Buffer.from(JSON.stringify(inp), 'utf8').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 120000 })
+                assert.strict.deepEqual(1, rb.status, `${rb.status} ${rb.stdout} ${rb.stderr}`)
+                assert.strict.deepEqual(true, rb.stdout.startsWith('error: ') && rb.stdout.includes(fn), rb.stdout)
+                assert.strict.deepEqual(false, fs.existsSync(inp.fpOut))
+                await assertHeldIntact(h)
+            }
+
+            //規格③: 轉檔器所開之WINWORD皆已結束
+            assert.strict.deepEqual([], await waitWordGone(newPids().filter((v) => v !== h.pid)))
+        }
+        finally {
+            await h.stop()
+        }
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('②兩行程交錯轉檔: 甲轉檔進行中(Word正取圖)時乙完整轉完一份, 兩者皆成功且輸出完整, 不殘留WINWORD', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let srv = await startHoldServer(png)
+        let rA = null
+        let rB = null
+        let aSettled = false
+        try {
+            let pA = conv(genHoldHtml('interleaveA', srv.url), 'interleaveA')
+            pA.then(() => {
+                aSettled = true
+            })
+            assert.strict.deepEqual(true, await untilHold(srv, pA), 'conversion A ended before Word requested the picture')
+            rB = await conv(genPage('interleaveB', '<h1>Word instance interleaveB</h1><p>plain</p>'), 'interleaveB')
+
+            //乙轉完時甲仍被扣住(兩者確實交錯; 乙與甲同用內建模板, 甲之實例已開著它)
+            assert.strict.deepEqual(false, aSettled)
+            srv.release()
+            rA = await pA
+        }
+        finally {
+            await srv.close()
+        }
+
+        //規格②: 兩者皆成功, 各自輸出含其來源內容且不含對方之內容
+        assert.strict.deepEqual([true, true], [rA.ok, rB.ok], JSON.stringify({ A: rA.err, B: rB.err }))
+        let xa = getDocumentXml(rA.fpOut)
+        let xb = getDocumentXml(rB.fpOut)
+        assert.strict.deepEqual([true, false], [xa.includes('Word instance interleaveA'), xa.includes('interleaveB')])
+        assert.strict.deepEqual([true, false], [xb.includes('Word instance interleaveB'), xb.includes('interleaveA')])
+
+        //規格③: 不殘留WINWORD
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('②兩行程並行轉檔(同時開始、錯開1.5秒, 各2次): 皆成功且輸出完整, 每次結束後不殘留WINWORD', async function() {
+        this.timeout(900000)
+        let iw = watch.lines.length
+        let fpIn = path.resolve('./test/ztmp.html')
+        let rs = []
+        for (let rep = 0; rep < 2; rep++) {
+            for (let off of [0, 1500]) {
+                let name = `race-${off}-${rep}`
+
+                //maxWord, 轉檔期間同時存在之轉檔器WINWORD數(取樣觀察, 用以確認兩個實例確有重疊)
+                let maxWord = 0
+                let smp = { on: true }
+                let sampler = (async () => {
+                    while (smp.on) {
+                        maxWord = Math.max(maxWord, newPids().length)
+                        await sleep(300)
+                    }
+                })()
+
+                //off為情境參數(乙晚甲off毫秒開始), 非同步點
+                let [a, b] = await Promise.all([
+                    conv(fpIn, `${name}-a`),
+                    sleep(off).then(() => conv(fpIn, `${name}-b`)),
+                ])
+                smp.on = false
+                await sampler
+                let full = (r) => r.ok && getDocumentXml(r.fpOut).includes('計畫報告') //來源html之h1
+                let left = await waitWordGone(newPids())
+                rs.push({ name, a: full(a) || a.err, b: full(b) || b.err, maxWord, left })
+            }
+        }
+
+        //規格②: 0失敗, 兩轉檔各自一個實例且期間重疊(同模板同html); 規格③: 每次結束後不殘留WINWORD
+        assert.strict.deepEqual([], rs.filter((v) => v.a !== true || v.b !== true || v.maxWord < 2 || v.left.length > 0), JSON.stringify(rs))
+        await assertNoVisible(iw)
+    })
+
+    it('④本行程之Word被他行程(舊寫法Dispatch)連上並開文件時: 轉檔成功, 轉完不結束該實例, 對方之文件保留, 對方用畢結束後不殘留', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let srv = await startHoldServer(png)
+        let b = null
+        let x = []
+        let r = null
+        try {
+            let p = conv(genHoldHtml('borrowed', srv.url), 'borrowed')
+            assert.strict.deepEqual(true, await untilHold(srv, p), 'conversion ended before Word requested the picture')
+
+            //x, 轉檔器之實例(本組開始時無其他Word, 故此時僅此一個)
+            x = newPids()
+            assert.strict.deepEqual(1, x.length, JSON.stringify(x))
+
+            //他行程以GetActiveObject連上並新增文件、寫入未存文字(Word取圖期間仍受理COM呼叫)
+            b = startBorrower(fpStopOf('borrower'), { text: 'unsaved text of the borrowing client 408' })
+            let { line } = await b.waitLine(/^(ADDED|NOATTACH|VISIBLE|EXIT)/)
+            assert.strict.deepEqual('ADDED', line, b.lines.join(' / '))
+            srv.release()
+            r = await p
+
+            //規格④: 轉檔成功, 輸出不含對方文件之文字
+            assert.strict.deepEqual(true, r.ok, r.err)
+            let xml = getDocumentXml(r.fpOut)
+            assert.strict.deepEqual([true, false], [xml.includes('Word instance borrowed'), xml.includes(b.text)])
+
+            //規格④: 對方於轉完後仍持有其同一份文件(文件數1, 以其文件參考讀得其未存文字), 即實例與該文件皆未被轉檔器關閉
+            let { line: lt } = await b.waitLine(/^(TEXTSET|SETFAIL|EXIT)/)
+            assert.strict.deepEqual('TEXTSET', lt, b.lines.join(' / '))
+            await b.stop()
+            assert.strict.deepEqual(true, b.lines.includes(`DOCS 1 ${b.text}`), b.lines.join(' / '))
+            b = null
+        }
+        finally {
+            if (b) {
+                await b.stop()
+            }
+            await srv.close()
+        }
+
+        //對方用畢以Quit結束該實例, 不殘留
+        assert.strict.deepEqual([], await waitWordGone(x))
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('⑤輸出路徑即模板(以輸出覆寫模板)時照常轉檔: 模板改為唯讀開啟之例外, 與改前相同', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+
+        //規格(不得改變轉檔之輸出與對外API): 改前模板以可寫開啟, fpOut與fpInTemp同檔時覆寫成功; 唯讀開啟則Word拒絕另存回原路徑(實測)
+        let fpT = path.join(fdTmp, 'same-path.docx')
+        fs.copyFileSync(path.resolve('./src/tmp.docx'), fpT)
+        let fpHtml = genPage('same-path', '<h1>Word instance same-path</h1><p>text</p>')
+        let r = await WHtml2docx(fpHtml, fpT, { fpInTemp: fpT })
+        assert.strict.deepEqual('ok', r)
+        assert.strict.deepEqual(true, getDocumentXml(fpT).includes('Word instance same-path'))
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
     })
 
 })
