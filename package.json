@@ -1,13 +1,13 @@
 {
   "name": "w-html2docx",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "main": "dist/w-html2docx.umd.js",
   "dependencies": {
-    "wsemi": "^1.9.55"
+    "wsemi": "^1.9.56"
   },
   "devDependencies": {
     "fflate": "^0.8.3",
-    "w-package-tools": "^1.1.25"
+    "w-package-tools": "^1.1.26"
   },
   "scripts": {
     "test": "mocha --parallel \"test/*.test.mjs\" --timeout 180000",
