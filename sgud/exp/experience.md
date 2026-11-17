@@ -46,3 +46,4 @@
 - mocha`--grep`之中文經 quiet-run 再經 shell 傳遞有轉碼之虞;以`./tmp/<任務>/runmocha.mjs`之參數陣列(`spawnSync`不經 shell)傳遞,並可指定執行目錄(模擬夾)而仍以 repo 根取 Word 鎖.
 - `--grep "(?=.*Word instance isolation)(?!.*1\.5)"`可排除單案而不用中文.
 - 新舊 exe 之輸出比對:去除`w:rsid*`,`w14:paraId/textId/anchorId`,`wp14:anchorId/editId`,`<w:rsid w:val>`,`<w:nsid>`,`<w:tmpl>`後,差異只在`word/numbering.xml`之未使用清單層與`fontTable.xml`之次序,同一 exe 連轉兩次亦有同型差異(Word 之逐次雜訊).
+- wsemi 1.9.64 起`E_OFFLINE_MISSING`之訊息只列檔名並指向「this error 之`missing`欄位」,但`WHtml2docx()`以字串 reject、無此欄位,透傳會誤導,故該碼之字串由包裝自組(只含檔名與「呼叫`ensureBins()`讀`err.missing[]`」);測試改驗`err.missing[]`欄位與「訊息不含 sha256、路徑」,字串案另於同環境呼叫`WHtml2docx.ensureBins()`驗其`err.missing[0].cachePath`.

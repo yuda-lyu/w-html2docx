@@ -14,7 +14,7 @@ let pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  * 環境變數: W_BIN_CACHE(共用快取資料夾)、W_BIN_MIRROR(鏡像, 本地資料夾或http(s)網址)、W_BIN_OFFLINE(1為離線), 見README〈外部執行檔〉
  *
  * @param {Object} [opt={}] 輸入設定物件, 交wsemi之fsEnsureBins(names、cacheDir、mirror、offline、onProgress等), pkgRoot固定為本套件根
- * @returns {Promise} 回傳Promise, resolve回傳{ [檔名]: 絕對路徑 }, reject回傳帶code之Error(E_OFFLINE_MISSING等)
+ * @returns {Promise} 回傳Promise, resolve回傳{ [檔名]: 絕對路徑 }, reject回傳帶code之Error(E_OFFLINE_MISSING等); E_OFFLINE_MISSING之訊息只列檔名與準備方法, 應放之位置與校驗值見錯誤物件之err.missing[](name、sha256、size、cachePath、mirrorPath、url等)
  */
 function ensureBins(opt = {}) {
     //floatingManifestUrl會改變清單之信任錨, 不轉傳使用者之值(主幹模式之網址由清單之repo與manifestPath決定)

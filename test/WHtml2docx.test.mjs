@@ -263,8 +263,8 @@ describe('WHtml2docx input checks', function() {
         assert.strict.deepEqual(false, w.fsIsFolder('./test/_tmp/WHtml2docx')) //於檢查階段即reject, 不會建立輸出資料夾
     })
 
-    it('htmlToDocx.exe取不到(離線且無快取無鏡像)時reject字串並含錯誤代碼與檔名, 不啟動轉檔器', async function() {
-        //規格T6/E2: 轉檔器經ensureBins取得, 離線缺檔為E_OFFLINE_MISSING; 本函數以字串reject(沿用既有契約)
+    it('htmlToDocx.exe取不到(離線且無快取無鏡像)時reject字串並含錯誤代碼與檔名, 不含sha256與路徑, 放置位置見ensureBins()之err.missing[], 不啟動轉檔器', async function() {
+        //規格T6/E2/V20: 轉檔器經ensureBins取得, 離線缺檔為E_OFFLINE_MISSING; 本函數以字串reject(沿用既有契約), 字串無結構欄位故只含檔名與固定說明
         let fdTmp = path.resolve('./test/_tmp/WHtml2docx-offline')
         let fpOut2 = `${fdTmp}/out/ztmp.docx`
         let keys = ['W_BIN_MIRROR', 'W_BIN_CACHE', 'W_BIN_OFFLINE']
@@ -276,10 +276,17 @@ describe('WHtml2docx input checks', function() {
         process.env.W_BIN_OFFLINE = '1'
         process.env.W_BIN_CACHE = path.join(fdTmp, 'cache')
         let err = null
+        let errBins = null
         try {
             await WHtml2docx('./test/ztmp.html', fpOut2)
                 .catch((e) => {
                     err = e
+                })
+
+            //應放之位置改由說明所指之途徑取得: 同環境下WHtml2docx.ensureBins()之err.missing[]
+            await WHtml2docx.ensureBins()
+                .catch((e) => {
+                    errBins = e
                 })
         }
         finally {
@@ -299,6 +306,19 @@ describe('WHtml2docx input checks', function() {
         }
         catch (e) {}
         assert.strict.deepEqual(true, typeof err === 'string' && err.includes('[E_OFFLINE_MISSING]') && err.includes('htmlToDocx.exe'), String(err))
+
+        //V20: 字串不含sha256、大小、快取位置與快取根, 含固定說明(離線準備請呼叫ensureBins()並讀err.missing[])
+        let manifest = JSON.parse(fs.readFileSync('bin/manifest.json', 'utf8'))
+        let entry = manifest.files.find((v) => v.name === 'htmlToDocx.exe')
+        let cachePath = path.join(fdTmp, 'cache', manifest.pkg, entry.sha256, 'htmlToDocx.exe')
+        assert.strict.deepEqual(true, err.includes('ensureBins()') && err.includes('err.missing[]'), err)
+        for (let s of [entry.sha256, String(entry.size), cachePath, path.join(fdTmp, 'cache'), fdTmp]) {
+            assert.strict.deepEqual(false, err.includes(s), `message should not include [${s}]: ${err}`)
+        }
+        assert.strict.deepEqual(true, errBins instanceof Error, String(errBins))
+        assert.strict.deepEqual('E_OFFLINE_MISSING', errBins.code, errBins.message)
+        assert.strict.deepEqual([['htmlToDocx.exe', entry.sha256, entry.size, cachePath]], errBins.missing.map((v) => [v.name, v.sha256, v.size, v.cachePath]))
+
         assert.strict.deepEqual(false, existOut) //未啟動轉檔器, 無輸出
     })
 

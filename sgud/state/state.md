@@ -37,6 +37,8 @@
 
 ## 驗證紀錄
 
+- 2026-11-18(跟跑 wsemi 1.9.64,V20):離線缺檔(`E_OFFLINE_MISSING`)之訊息不再含 sha256、大小與路徑,`api-ensureBins` T6 兩案改驗`err.missing[]`欄位(`name`、`sha256`、`size`、`cachePath`、`mirrorPath`),`WHtml2docx()`之字串改為只含檔名與「呼叫`ensureBins()`讀`err.missing[]`」之固定說明,README〈外部執行檔〉已補放置位置之讀法;全套 `npm test` 59 passing / 0 failing(修前 57 passing + 2 failing;另一次全套曾見〈Word instance isolation〉之「②兩行程並行轉檔」1 案偶發紅〔Word 回報無法儲存〕,與離線缺檔無關,同組重跑 5 次 5/5 綠、全套重跑 1 次全綠);包裝之 2 式變異(字串夾帶快取路徑、改回透傳)皆被 `WHtml2docx.test` 之離線缺檔字串案殺.
+
 - 2026-10-28:`unit-binManifest`(7),`api-ensureBins`(11)新增;`WHtml2docx.test`(20,含新增 1 案,以本機鏡像供檔,實際調用 Word 轉檔)全綠.T8(主幹模式)不適用.
 - 2026-10-29(html2docx-run01):`WHtml2docx.test`新增〈local pictures〉15 案(`api-ensureBins`11,`unit-binManifest`7,`WHtml2docx.test`35,合計 53).於[清單重產後]之模擬夾(新 exe+清單改為其 sha256/size)全套 53 passing;repo 內`npm test`在清單重產前為 12 passing,31 failing,31 項皆為清單與`bin/`不符所致(T2、依清單取 exe 之`WHtml2docx.test`與`api-ensureBins`各案),重產清單後應轉綠.修前(舊 exe)跑〈local pictures〉為 13 failing;變異 M1~M7 除等價之 M4(省略`SavePictureWithDocument=True`)外皆被殺.
 

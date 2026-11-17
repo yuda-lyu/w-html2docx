@@ -111,11 +111,12 @@ error: LinkedPictureError: 1 linked picture(s) can not be embedded since Word ca
 - 環境變數：
   - `W_BIN_CACHE=<資料夾>`：快取改放`<資料夾>/w-html2docx/`(套件所在之`node_modules`唯讀時使用，多套件可共用同一資料夾)。
   - `W_BIN_MIRROR=<資料夾或http(s)網址>`：內網鏡像，先找鏡像再連GitHub；結構為`<鏡像>/w-html2docx/<sha256>/htmlToDocx.exe`。鏡像之檔同樣以清單校驗，不符即不用。
-  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像；缺檔時錯誤(`E_OFFLINE_MISSING`)會列出缺哪些檔、sha256、大小與應放之完整路徑。
+  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像；缺檔時錯誤(`E_OFFLINE_MISSING`)之訊息只列缺哪些檔與準備方法(不含sha256與路徑)；sha256、大小與應放之完整路徑(`cachePath`、有設鏡像時之`mirrorPath`)見該錯誤之`err.missing[]`。
 - 離線部署：
   1. 在可連網之電腦設`W_BIN_CACHE=<空資料夾>`，呼叫本套件之`ensureBins()`一次(或轉檔一次)。
   2. 把該資料夾整個帶到內網電腦，設`W_BIN_MIRROR=<該資料夾>`(全離線時另設`W_BIN_OFFLINE=1`)。
-- `WHtml2docx()`取不到執行檔時reject字串(含錯誤代碼，如`[E_OFFLINE_MISSING]`、`[E_HASH_MISMATCH]`)；直接呼叫`ensureBins()`(`WHtml2docx.ensureBins`或`w-html2docx/src/ensureBins.mjs`)則reject帶`code`之Error。
+- `WHtml2docx()`取不到執行檔時reject字串(含錯誤代碼，如`[E_OFFLINE_MISSING]`、`[E_HASH_MISMATCH]`)；離線缺檔之字串(`[E_OFFLINE_MISSING] …`)只含檔名與固定說明，**不含路徑與sha256**(字串無結構欄位)；直接呼叫`ensureBins()`(`WHtml2docx.ensureBins`或`w-html2docx/src/ensureBins.mjs`)則reject帶`code`之Error。
+- 離線缺檔時之放置位置：`ensureBins()`之Error的`code`為`E_OFFLINE_MISSING`時，`err.missing[]`逐檔載明`name`、`sha256`、`size`、`cachePath`(應放入快取之完整路徑)、`mirrorPath`(有設鏡像時應放入鏡像之完整路徑，否則為`null`)、`url`等，**請自`cachePath`／`mirrorPath`讀取**；`WHtml2docx()`收到`[E_OFFLINE_MISSING]`字串時，於同環境呼叫`ensureBins()`即得。
 
 ```alias
 import WHtml2docx from 'w-html2docx'
@@ -123,4 +124,21 @@ import WHtml2docx from 'w-html2docx'
 //部署前預先取得, 回傳{ 'htmlToDocx.exe': 絕對路徑 }
 let bins = await WHtml2docx.ensureBins()
 console.log(bins['htmlToDocx.exe'])
+```
+
+離線缺檔時，自`err.missing[]`讀取應放之位置：
+
+```alias
+import WHtml2docx from 'w-html2docx'
+
+//W_BIN_OFFLINE=1且快取與鏡像皆無htmlToDocx.exe時
+try {
+    await WHtml2docx.ensureBins()
+}
+catch (err) {
+    if (err.code === 'E_OFFLINE_MISSING') {
+        console.log(err.missing)
+        // => [ { name: 'htmlToDocx.exe', sha256: '…', size: …, cachePath: 'D:\\xxx\\…\\<sha256>\\htmlToDocx.exe', mirrorPath: null, url: '…', … } ]
+    }
+}
 ```

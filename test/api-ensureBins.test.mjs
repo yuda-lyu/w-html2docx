@@ -194,7 +194,7 @@ describe(`ensureBins`, function() {
         assert.strict.deepStrictEqual(listFiles(cacheDir2), [])
     })
 
-    it(`T6: W_BIN_OFFLINE=1 without cache or mirror is E_OFFLINE_MISSING naming the file, sha256, size and the path to place it (O3, D3)`, async function() {
+    it(`T6: W_BIN_OFFLINE=1 without cache or mirror is E_OFFLINE_MISSING; err.missing[] carries the name, sha256, size and the path to place it, the message only names the file (O3, D3, V20)`, async function() {
         process.env.W_BIN_OFFLINE = '1'
         process.env.W_BIN_CACHE = path.join(fdt, `shared${seq}`)
         let err = await ensureBins({ fetch: noNet })
@@ -205,26 +205,43 @@ describe(`ensureBins`, function() {
         assert.strict.equal(nNet, 0)
         assert.strict.equal(urls.length, 0)
 
-        //D3: 共用快取之結構為<W_BIN_CACHE>/<套件>/<sha256>/<name>
+        //D3: 共用快取之結構為<W_BIN_CACHE>/<套件>/<sha256>/<name>; 缺哪個檔、應放何處改由結構欄位err.missing[]驗(規格O3、T6)
+        assert.strict.equal(Array.isArray(err.missing), true)
+        assert.strict.equal(err.missing.length, 1)
         let m = err.missing[0]
         assert.strict.equal(m.name, name)
         assert.strict.equal(m.sha256, ent.sha256)
         assert.strict.equal(m.size, ent.size)
         assert.strict.equal(m.cachePath, path.join(process.env.W_BIN_CACHE, manifest.pkg, ent.sha256, name))
-        for (let s of [name, ent.sha256, String(ent.size), m.cachePath]) {
-            assert.strict.equal(err.message.includes(s), true, `message should include [${s}]`)
+        assert.strict.equal(m.mirrorPath, null) //無鏡像時為null
+        assert.strict.equal(m.bundle, null) //本套件為單一檔, 非檔案組
+
+        //V20: 訊息含檔名, 不含sha256、路徑(快取位置、快取根)與大小之值
+        assert.strict.equal(err.message.includes(name), true, err.message)
+        for (let s of [ent.sha256, m.cachePath, process.env.W_BIN_CACHE, fdt, String(ent.size)]) {
+            assert.strict.equal(err.message.includes(s), false, `message should not include [${s}]: ${err.message}`)
         }
     })
 
-    it(`T6: with an offline mirror configured, the error also names the mirror path (O3, O1)`, async function() {
+    it(`T6: with an offline mirror configured, err.missing[].mirrorPath names the mirror path, the message does not (O3, O1, V20)`, async function() {
         let fdMirror = path.join(fdt, `mirror${seq}`) //不存在之鏡像
         let err = await ensureBins({ fetch: noNet, cacheDir, mirror: fdMirror, offline: true })
             .then(() => null)
             .catch((e) => e)
         assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
         let fpMirror = path.join(fdMirror, manifest.pkg, ent.sha256, name)
-        assert.strict.equal(err.missing[0].mirrorPath, fpMirror)
-        assert.strict.equal(err.message.includes(fpMirror), true)
+        let m = err.missing[0]
+        assert.strict.equal(m.name, name)
+        assert.strict.equal(m.sha256, ent.sha256)
+        assert.strict.equal(m.size, ent.size)
+        assert.strict.equal(m.cachePath, path.join(cacheDir, ent.sha256, name))
+        assert.strict.equal(m.mirrorPath, fpMirror)
+
+        //V20: 訊息含檔名, 不含鏡像路徑、鏡像夾、快取路徑與sha256
+        assert.strict.equal(err.message.includes(name), true, err.message)
+        for (let s of [fpMirror, fdMirror, m.cachePath, cacheDir, ent.sha256]) {
+            assert.strict.equal(err.message.includes(s), false, `message should not include [${s}]: ${err.message}`)
+        }
     })
 
     it(`T7: a tampered cache file is refused and fetched again (D4)`, async function() {
