@@ -1,7 +1,7 @@
 import fs from 'fs'
 import http from 'http'
 import path from 'path'
-import { spawnSync } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import w from 'wsemi'
 import assert from 'assert'
 import { unzipSync, strFromU8 } from 'fflate'
@@ -10,7 +10,7 @@ import ensureBins from '../src/ensureBins.mjs'
 import { setBinEnv } from './tools/binEnv.mjs'
 import { genTallPng, genGridTemplate, genFigureHtml, getImgHeights, getFigurePages } from './tools/imgHeightFixture.mjs'
 import { LINK_CASES, genLinkCases, genHtml, genLinkHtml, getDocxPictures } from './tools/imgLinkFixture.mjs'
-import { sleep, wordPids, isAutomationWord, waitWordGone, killNewAutomationWords, clearDisabledItems, startHeldWord, startBorrower, startVisibleWordWatch, startHoldServer } from './tools/wordInstance.mjs'
+import { sleep, wordPids, isAutomationWord, waitWordGone, killNewAutomationWords, clearDisabledItems, startHeldWord, startBorrower, startVisibleWordWatch, denyCreateIn, startHoldServer } from './tools/wordInstance.mjs'
 
 
 function isWindows() {
@@ -686,6 +686,8 @@ describe('WHtml2docx Word instance isolation', function() {
     //  ①他行程已開之Word(含其未存內容)不被借用, 不被結束; ②兩行程並行轉檔(同時, 錯開1.5秒, 交錯)皆成功;
     //  ③例外路徑(轉檔失敗, 來源或模板開啟失敗)亦只結束自己之實例且不殘留WINWORD; ④本行程之實例被他行程(舊寫法Dispatch)連上並開文件時, 轉完不結束該實例
     //  他行程之Word以PowerShell經COM扮演(見tools/wordInstance.mjs), 一律隱藏; 本組須在無其他Word時執行(見before)
+    //  另存之暫時性衝突(主控排程第439項, 2026-11-27): ⑥輸出夾暫時無法建立檔案時轉檔器重試, 解除後成功; ⑦一直無法建立時重試用盡即失敗(fail-closed); ⑧opt.saveRetryCount/saveRetryInterval傳至轉檔器;
+    //  ⑨兩個真實Word實例同刻另存至同一資料夾時不失敗. 成因: 兩個Word實例同時另存至同一資料夾時, 其一於數十毫秒內回報「無法儲存或建立此檔案」(scode -2146823132), 與負載或防毒無關(見sgud/exp/experience.md)
 
     let fdTmp = path.resolve('./test/_tmp/WHtml2docx-word')
     let fdOut = path.join(fdTmp, 'out')
@@ -731,6 +733,19 @@ describe('WHtml2docx Word instance isolation', function() {
         return r
     }
 
+    //conv2, 轉檔至指定輸出路徑並帶opt, 回傳{ ok, err }, 不拋錯
+    let conv2 = async (fpHtml, fpOut, opt) => {
+        let r = { ok: false, err: '' }
+        await WHtml2docx(fpHtml, fpOut, opt)
+            .then((v) => {
+                r.ok = v === 'ok'
+            })
+            .catch((e) => {
+                r.err = String(e)
+            })
+        return r
+    }
+
     //untilHold, 等轉檔進行到Word向伺服器取圖; 轉檔先結束者回傳false
     let untilHold = async (srv, p) => {
         return Promise.race([srv.firstRequest().then(() => true), p.then(() => false)])
@@ -756,6 +771,97 @@ describe('WHtml2docx Word instance isolation', function() {
     //assertNoVisible, 規格: 自監看第iw行起無可見之Word視窗(等監看再完成一輪後判定)
     let assertNoVisible = async (iw) => {
         assert.strict.deepEqual([], await watch.visibleSince(iw))
+    }
+
+    //baseInp, 直接呼叫轉檔器之輸入(與WHtml2docx送出者同形, 不含另存重試設定)
+    let baseInp = (fpHtml, fpOut) => {
+        return {
+            fpInSrc: fpHtml,
+            fpInTemp: path.resolve('./src/tmp.docx'),
+            fpOut,
+            fontFamilies: ['標楷體', 'Times New Roman'],
+            imgRatioWidthMax: 1,
+            imgRatioHeightMax: 1,
+            imgHeightReserveLines: null,
+        }
+    }
+
+    //startConverter, 直接起轉檔器(略過WHtml2docx), 收其stdout與stderr(utf-8)與離開碼; waitStderr(re)等其stderr出現符合re之內容(事件同步), 轉檔器先結束仍無則reject
+    let startConverter = (prog, inp) => {
+        let c = { stdout: '', stderr: '', code: null, closed: false }
+        let waiters = []
+        let notify = () => {
+            for (let f of waiters.slice()) {
+                f()
+            }
+        }
+        let p = spawn(prog, [Buffer.from(JSON.stringify(inp), 'utf8').toString('base64')], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+        p.stdout.setEncoding('utf8')
+        p.stderr.setEncoding('utf8')
+        p.stdout.on('data', (d) => {
+            c.stdout += d
+            notify()
+        })
+        p.stderr.on('data', (d) => {
+            c.stderr += d
+            notify()
+        })
+        c.done = new Promise((resolve) => {
+            p.on('close', (code) => {
+                c.code = code
+                c.closed = true
+                notify()
+                resolve(code)
+            })
+            p.on('error', (err) => {
+                c.stderr += `SPAWNERR ${err.message}`
+                c.closed = true
+                notify()
+                resolve(null)
+            })
+        })
+        c.waitStderr = (re, ms = 120000) => new Promise((resolve, reject) => {
+            let timer = null
+            let check = null
+            let fin = () => {
+                clearTimeout(timer)
+                waiters = waiters.filter((f) => f !== check)
+            }
+            check = () => {
+                if (re.test(c.stderr)) {
+                    fin()
+                    resolve()
+                }
+                else if (c.closed) {
+                    fin()
+                    reject(new Error(`converter exited without ${re}: ${c.code} ${c.stdout} ${c.stderr}`))
+                }
+            }
+            timer = setTimeout(() => {
+                fin()
+                reject(new Error(`timeout waiting for ${re}: ${c.stderr}`))
+            }, ms)
+            waiters.push(check)
+            check()
+        })
+        c.kill = () => {
+            try {
+                p.kill()
+            }
+            catch (err) {}
+        }
+        return c
+    }
+
+    //retryLines, 輸出中之另存重試行(轉檔器每次重試於stderr印一行`save retry k/n after ...`)
+    let retryLines = (s) => {
+        return String(s).split(/\r?\n/).filter((v) => /^save retry /.test(v))
+    }
+
+    //pyReady, 本機有python且已裝pywin32(建置轉檔器之相依)才能跑⑨(轉檔器之python程式以模組載入驗證)
+    let pyReady = () => {
+        let r = spawnSync('python', ['-I', '-c', 'import pythoncom, win32com'], { encoding: 'utf8', windowsHide: true, timeout: 60000 })
+        return r.status === 0
     }
 
     before(async function() {
@@ -1028,6 +1134,215 @@ describe('WHtml2docx Word instance isolation', function() {
         assert.strict.deepEqual(true, getDocumentXml(fpT).includes('Word instance same-path'))
         assert.strict.deepEqual([], await waitWordGone(newPids()))
         await assertNoVisible(iw)
+    })
+
+    it('⑥另存遇暫時性衝突(輸出夾暫時無法建立檔案, Word回報「無法儲存或建立此檔案」): 轉檔器於同一份文件重試, 衝突解除後轉檔成功, 輸出完整, 不殘留WINWORD', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+
+        //規格⑥: 衝突(替身: 輸出夾拒絕建立檔案)期間轉檔器重試另存而非即刻失敗; 解除後重試成功
+        let fdS = path.join(fdTmp, 'save-retry-ok')
+        fs.mkdirSync(fdS, { recursive: true })
+        let fpOut = path.join(fdS, 'out.docx')
+        let fpHtml = genPage('save-retry-ok', '<h1>Word instance save-retry-ok</h1><p>text</p>')
+        let prog = (await WHtml2docx.ensureBins())['htmlToDocx.exe']
+        let d = denyCreateIn(fdS)
+        let c = null
+        try {
+            assert.strict.deepEqual(true, d.denied, 'the substitute lock did not take effect')
+            c = startConverter(prog, { ...baseInp(fpHtml, fpOut), saveRetryCount: 50, saveRetryInterval: 100 })
+
+            //等轉檔器回報第1次重試(事件同步, 不以延時): 此時另存已被擋下一次, 輸出尚未產生
+            await c.waitStderr(/^save retry 1\/50 /m)
+            assert.strict.deepEqual(false, fs.existsSync(fpOut), 'the output must not exist while the save is blocked')
+            d.release()
+            await c.done
+        }
+        finally {
+            d.release()
+            if (c) {
+                c.kill()
+            }
+        }
+
+        //規格⑥: 衝突解除後成功: 離開碼0, 輸出success, 輸出含來源內容, 曾重試至少1次
+        assert.strict.deepEqual([0, 'success'], [c.code, c.stdout.trim()], `${c.stdout} ${c.stderr}`)
+        assert.strict.deepEqual(true, getDocumentXml(fpOut).includes('Word instance save-retry-ok'))
+        assert.strict.deepEqual(true, retryLines(c.stderr).length >= 1, c.stderr)
+
+        //規格⑥: 每次重試之等待為基準間隔(100毫秒)乘以[1,2)之倍率
+        let msOut = retryLines(c.stderr).map((v) => Number((v.match(/^save retry \d+\/\d+ after (\d+) ms /) || [])[1])).filter((v) => !(v >= 100 && v < 200))
+        assert.strict.deepEqual([], msOut, c.stderr)
+
+        //規格③: 不殘留WINWORD, 不開可見視窗
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('⑦輸出夾一直無法建立檔案: 重試用盡後轉檔失敗(fail-closed, 不回成功), 離開碼1且回報原錯誤, 不產生輸出檔, 重試次數即所設, 不殘留WINWORD', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+
+        //規格⑦: 衝突不解除時, 重試至所設次數(2)即失敗, 失敗訊息仍為Word之原錯誤(scode -2146823132), 不得回成功
+        let fdS = path.join(fdTmp, 'save-retry-fail')
+        fs.mkdirSync(fdS, { recursive: true })
+        let fpOut = path.join(fdS, 'out.docx')
+        let fpHtml = genPage('save-retry-fail', '<h1>Word instance save-retry-fail</h1><p>text</p>')
+        let prog = (await WHtml2docx.ensureBins())['htmlToDocx.exe']
+        let d = denyCreateIn(fdS)
+        let c = null
+        try {
+            assert.strict.deepEqual(true, d.denied, 'the substitute lock did not take effect')
+            c = startConverter(prog, { ...baseInp(fpHtml, fpOut), saveRetryCount: 2, saveRetryInterval: 100 })
+            await c.done
+        }
+        finally {
+            d.release()
+            if (c) {
+                c.kill()
+            }
+        }
+        assert.strict.deepEqual(1, c.code, `${c.stdout} ${c.stderr}`)
+        assert.strict.deepEqual(true, c.stdout.startsWith('error: com_error') && c.stdout.includes('-2146823132'), c.stdout)
+        assert.strict.deepEqual(['save retry 1/2', 'save retry 2/2'], retryLines(c.stderr).map((v) => v.slice(0, 14)), c.stderr)
+        assert.strict.deepEqual(false, fs.existsSync(fpOut))
+
+        //規格③: 例外路徑亦不殘留WINWORD
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('⑧WHtml2docx之opt.saveRetryCount與opt.saveRetryInterval傳至轉檔器: 輸出夾一直無法建立檔案時, reject訊息中之重試次數與每次等待依設定, 設0不重試, 未給或無效值為預設(5次, 基準300毫秒)', async function() {
+        this.timeout(300000)
+        let iw = watch.lines.length
+        let fdS = path.join(fdTmp, 'save-retry-opt')
+        fs.mkdirSync(fdS, { recursive: true })
+        let fpHtml = genPage('save-retry-opt', '<h1>Word instance save-retry-opt</h1><p>text</p>')
+        let d = denyCreateIn(fdS)
+        let rs = []
+        try {
+            assert.strict.deepEqual(true, d.denied, 'the substitute lock did not take effect')
+            //[opt, 重試次數, 每次等待(毫秒)之範圍[下界, 上界)]: 等待為基準間隔乘以[1,2)之倍率, 重試行印出該次之等待值(計算值, 非量測值, 故不受負載影響); 預設為5次, 基準300毫秒
+            for (let [opt, n, lo, hi] of [
+                [{ saveRetryCount: 2, saveRetryInterval: 50 }, 2, 50, 100],
+                [{ saveRetryCount: '1', saveRetryInterval: '50' }, 1, 50, 100],
+                [{ saveRetryCount: 0 }, 0, 300, 600],
+                [{ saveRetryCount: 1, saveRetryInterval: 1000 }, 1, 1000, 2000],
+                [{ saveRetryCount: 1, saveRetryInterval: 0 }, 1, 0, 1],
+                [{ saveRetryCount: 1, saveRetryInterval: 2147483648 }, 1, 300, 600],
+                [{ saveRetryCount: -1, saveRetryInterval: -1 }, 5, 300, 600],
+                [{ saveRetryCount: 1.5, saveRetryInterval: 'x' }, 5, 300, 600],
+                [{}, 5, 300, 600],
+            ]) {
+                //opt.timeout為防懸置上限(逾時即結束轉檔器): 無效值之處置若被改壞(如間隔超出計時上限而照用), 轉檔器會等上數十日
+                let r = await conv2(fpHtml, path.join(fdS, `out-${rs.length}.docx`), { timeout: 150000, ...opt })
+                let ls = retryLines(r.err)
+                let ms = ls.map((v) => Number((v.match(/^save retry \d+\/\d+ after (\d+) ms /) || [])[1]))
+                rs.push({ opt, n, ok: r.ok, lines: ls.length, msOut: ms.filter((v) => !(v >= lo && v < hi)), err: r.err.slice(0, 300) })
+            }
+        }
+        finally {
+            d.release()
+        }
+
+        //規格⑧: 皆失敗(fail-closed), 重試行數與每次等待依設定
+        assert.strict.deepEqual([], rs.filter((v) => v.ok || v.lines !== v.n || v.msOut.length > 0 || !v.err.includes('-2146823132')), JSON.stringify(rs))
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('⑨兩個真實Word實例於同一刻另存至同一資料夾(30輪): 轉檔器之另存重試使全部另存成功且輸出完整, 不殘留WINWORD', async function() {
+        this.timeout(300000)
+        if (!pyReady()) {
+            console.log('skip [⑨]: python with pywin32 is not available')
+            this.skip()
+        }
+        let iw = watch.lines.length
+
+        //規格⑨: 無重試時30輪共60次另存中約11~19次失敗(實測, 見test/tools/saveRaceProbe.py之說明); 有重試(轉檔器之saveAs2WithRetry)須0失敗. 以轉檔器之python程式載入驗證(兩個獨立行程各一個DispatchEx實例, 於約定時刻同刻另存)
+        let fdR = path.join(fdTmp, 'save-race')
+        fs.mkdirSync(fdR, { recursive: true })
+        let r = spawnSync('python', ['-I', '-B', path.resolve('./test/tools/saveRaceProbe.py'), path.resolve('./srcPython/htmlToDocx.py'), path.resolve('./src/tmp.docx'), fdR, '30'], { encoding: 'utf8', windowsHide: true, timeout: 240000 })
+        assert.strict.deepEqual(0, r.status, `${r.stdout} ${r.stderr}`)
+        let o = JSON.parse(String(r.stdout).trim().split(/\r?\n/).pop())
+        assert.strict.deepEqual({ saves: 60, failed: [], bad: [], errs: [] }, { saves: o.saves, failed: o.failed, bad: o.bad, errs: o.errs })
+
+        //本案之鑑別力前提: 本次確實發生過衝突並經重試成功(0表示兩實例未撞上, 結果空過; Word日後若修正此衝突則此前提不成立, 屆時重審本案)
+        assert.strict.deepEqual(true, o.retried >= 1, `no save conflict happened in this run, the result proves nothing: ${JSON.stringify(o)}`)
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+})
+
+
+describe('WHtml2docx save retry(轉檔器之另存重試, 以假Word物件驗證, 不啟動Word)', function() {
+
+    //check
+    if (!isWindows()) {
+        return
+    }
+
+    //規格(主控排程第439項, 2026-11-27): 另存遇暫時性衝突(scode -2146823132)有界重試, 重試用盡或其他錯誤照常失敗(fail-closed);
+    //  srcPython/htmlToDocx.py以模組載入(不執行run), 由test/tools/saveRetryProbe.py以假Word物件跑出各情境之觀察值, 本組逐項斷言
+
+    let o = null
+
+    before(function() {
+        this.timeout(120000)
+        let chk = spawnSync('python', ['-I', '-c', 'import pythoncom, win32com'], { encoding: 'utf8', windowsHide: true, timeout: 60000 })
+        if (chk.status !== 0) {
+            console.log('skip [save retry]: python with pywin32 is not available')
+            this.skip()
+        }
+        let r = spawnSync('python', ['-I', '-B', path.resolve('./test/tools/saveRetryProbe.py'), path.resolve('./srcPython/htmlToDocx.py')], { encoding: 'utf8', windowsHide: true, timeout: 100000 })
+        assert.strict.deepEqual(0, r.status, `${r.stdout} ${r.stderr}`)
+        o = JSON.parse(String(r.stdout).trim().split(/\r?\n/).pop())
+    })
+
+    it('首次即成功不重試; 暫時性衝突(scode -2146823132)重試至成功: 回傳重試次數, 每次等待為基準間隔乘以[1,2)之倍率', function() {
+        assert.strict.deepEqual({ ret: 0, raised: null, calls: 1, sleeps: [] }, o.u_first_ok)
+        assert.strict.deepEqual({ ret: 2, raised: null, calls: 3, sleeps: [0.375, 0.375] }, o.u_two_then_ok) //基準300毫秒, 倍率1.25
+        assert.strict.deepEqual([0.3], o.u_rand_lo.sleeps) //倍率下界1
+        assert.strict.deepEqual(true, o.u_rand_hi.sleeps.length === 1 && o.u_rand_hi.sleeps[0] > 0.59 && o.u_rand_hi.sleeps[0] <= 0.6, JSON.stringify(o.u_rand_hi)) //倍率趨近2(不含)
+    })
+
+    it('重試用盡仍失敗者拋出原例外(fail-closed, 不回成功): 呼叫次數為首次加重試次數, 重試次數為0即不重試', function() {
+        assert.strict.deepEqual({ ret: null, raised: 'com_error:-2146823132', calls: 4, sleeps: [0.45, 0.45, 0.45] }, o.u_exhausted)
+        assert.strict.deepEqual({ ret: null, raised: 'com_error:-2146823132', calls: 1, sleeps: [] }, o.u_count0)
+    })
+
+    it('其他錯誤不重試: 他種scode(輸出檔使用中)、非COM例外、重試中改回他種錯誤皆即刻拋出', function() {
+        assert.strict.deepEqual({ ret: null, raised: 'com_error:-2146822935', calls: 1, sleeps: [] }, o.u_other_code)
+        assert.strict.deepEqual({ ret: null, raised: 'ValueError:boom', calls: 1, sleeps: [] }, o.u_not_com_error)
+        assert.strict.deepEqual({ ret: null, raised: 'com_error:-2146822935', calls: 2, sleeps: [0.375] }, o.u_conflict_then_other)
+    })
+
+    //nLines, 該情境於stderr印出之重試行數
+    let nLines = (v) => v.retryLines.length
+
+    it('轉檔器入口(core)之設定: 依saveRetryCount與saveRetryInterval重試並於stderr印重試行, 成功回success; 用盡回error與原錯誤; 每條路徑皆結束Word實例', function() {
+        assert.strict.deepEqual(['success', 3, 2, 1], [o.c_retry_ok.state, o.c_retry_ok.calls, nLines(o.c_retry_ok), o.c_retry_ok.quit])
+        assert.strict.deepEqual(['save retry 1/2', 'save retry 2/2'], o.c_retry_ok.retryLines.map((v) => v.slice(0, 14)))
+        assert.strict.deepEqual([true, 3, 2, 1], [o.c_exhausted.state.startsWith('error: com_error') && o.c_exhausted.state.includes('-2146823132'), o.c_exhausted.calls, nLines(o.c_exhausted), o.c_exhausted.quit])
+        assert.strict.deepEqual([true, 1, 0, 1], [o.c_count0.state.startsWith('error: com_error'), o.c_count0.calls, nLines(o.c_count0), o.c_count0.quit])
+        assert.strict.deepEqual([true, 1, 0, 1], [o.c_other_code.state.includes('-2146822935'), o.c_other_code.calls, nLines(o.c_other_code), o.c_other_code.quit])
+    })
+
+    it('轉檔器入口之預設與無效值: 舊版呼叫端不送此二鍵、送null、無效值(負數, 小數, 字串, 布林, 無限大, 間隔超出計時上限2147483647)時重試次數為預設5, 間隔基準為預設300毫秒', function() {
+        let inRange = (v, lo, hi) => v.sleeps.length > 0 && v.sleeps.every((s) => s >= lo && s < hi)
+        for (let k of ['c_default', 'c_null']) {
+            assert.strict.deepEqual([6, 5], [o[k].calls, nLines(o[k])], k)
+            assert.strict.deepEqual(true, inRange(o[k], 0.3, 0.6), `${k} ${JSON.stringify(o[k].sleeps)}`)
+        }
+        for (let k of ['neg', 'frac', 'str', 'bool', 'inf']) {
+            assert.strict.deepEqual([6, 5], [o[`c_bad_count_${k}`].calls, nLines(o[`c_bad_count_${k}`])], k)
+        }
+        for (let k of ['neg', 'str', 'bool', 'inf', 'big']) { //big為超出計時上限2147483647(視為未給, 規格〈輸入參數之檢測機制〉K3)
+            assert.strict.deepEqual(true, inRange(o[`c_bad_interval_${k}`], 0.3, 0.6), `${k} ${JSON.stringify(o[`c_bad_interval_${k}`].sleeps)}`)
+        }
+        assert.strict.deepEqual(true, inRange(o.c_interval_custom, 1, 2), JSON.stringify(o.c_interval_custom.sleeps)) //給1000毫秒即[1,2)秒
+        assert.strict.deepEqual(true, inRange(o.c_interval_max, 2147483.647, 4294967.295), JSON.stringify(o.c_interval_max.sleeps)) //計時上限本身有效(假時鐘, 不實際等待)
     })
 
 })

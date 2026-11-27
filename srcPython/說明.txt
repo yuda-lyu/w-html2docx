@@ -18,6 +18,8 @@
     'imgRatioWidthMax': 1,             #圖片最大寬度比例(0至1)
     'imgRatioHeightMax': 1,            #圖片最大高度比例(0至1)
     'imgHeightReserveLines': None,     #行格線模板之圖片下方預留格數(非負整數), 可省略, 省略或無效時不啟用
+    'saveRetryCount': 5,               #另存遇暫時性衝突(見第12條)時之重試次數(不含首次), 非負整數, 可省略(或null), 省略或無效時為5, 0即不重試
+    'saveRetryInterval': 300,          #重試之基準間隔毫秒(0至2147483647), 可省略(或null), 省略, 無效或超出範圍時為300; 每次實際等待為其乘以[1,2)之隨機倍率
 }
 序列化成json字串再轉base64即可
 
@@ -34,6 +36,12 @@
 斷開後仍為連結圖者(判斷依據: 讀得到LinkFormat.SourceFullName; 非連結圖讀取會拋例外)即Word解析不到之來源(圖檔不存在, 網址取不到, 正斜線絕對路徑或百分比編碼之路徑與file網址), 以LinkedPictureError失敗(見第9條), 在另存之前, 不產生輸出檔。
 Word 16實測可解析: 反斜線絕對路徑, 相對路徑原字(相對於html檔), file:///原字(不編碼); 不可解析: 正斜線絕對路徑(Word改寫為C://...), 百分比編碼之相對路徑, pathToFileURL()之file:///...%E9...(Word不解碼, 再編為%25E9...)。
 SVG以svg(向量)加Word自產之png預覽內嵌; png、jpg維持原位元組。
+
+12.另存之暫時性衝突重試(2026-11-27, 主控排程第439項): 兩個Word實例同時另存至同一資料夾時, 其一偶會於十餘毫秒內失敗, 回報「Word 無法儲存或建立此檔案」(com_error, excepinfo之scode為-2146823132; 與負載, 防毒無關: 兩實例約定同刻另存至同一資料夾時不重試之下最高三至六成輪次有一方失敗, 至不同資料夾0次; 失敗者隔0.2秒重存即成功)。
+htmlToDocxCore之SaveAs2改經saveAs2WithRetry: 僅對此一碼於同一份文件重試, 最多saveRetryCount次(預設5), 每次等待saveRetryInterval毫秒(預設300)乘以[1,2)之隨機倍率; 每次重試於stderr印一行 save retry k/n after N ms since SaveAs2 failed with -2146823132。
+其他錯誤(含他種scode, 如輸出檔使用中-2146822935)不重試; 重試用盡仍失敗者拋出原例外(fail-closed, 離開碼1, stdout印 error: com_error: ... , 不產生輸出檔)。此碼亦見於磁碟已滿, 資料夾唯讀等持續性原因, 屆時重試用盡後照常失敗(預設多等約1.5至3秒)。
+測試: 無法以檔案鎖扮演此衝突(占住輸出檔得另兩種碼, 占住~WRD0000.tmp等暫存檔名Word改用他名而成功), 故以「輸出夾暫時拒絕建立檔案(icacls /deny, 同碼同訊息)」扮演, 另以兩個真實Word實例於同刻另存重現, 見test/WHtml2docx.test.mjs ⑥~⑨與test/tools/saveRetryProbe.py, saveRaceProbe.py。
+本檔(htmlToDocx.py)以__name__為__main__才執行run(), 以模組載入時不執行(測試以python載入驗證saveAs2WithRetry與core)。
 
 ----------------------------------------------------------------------
 參考

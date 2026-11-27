@@ -74,7 +74,7 @@ html內的圖片皆內嵌於輸出docx，轉出的docx不依賴原圖(移至他�
 
 ```alias
 code[1]:
-unresolved linked picture: C://opensrc/專案/圖 資料夾/圖 A2.png
+unresolved linked picture: C://專案/圖 資料夾/圖 A2.png
 error: LinkedPictureError: 1 linked picture(s) can not be embedded since Word can not resolve their source(see stderr)
 ```
 
@@ -90,6 +90,24 @@ error: LinkedPictureError: 1 linked picture(s) can not be embedded since Word ca
 | 百分比編碼之`file:///`網址(如`pathToFileURL()`之結果) | `file:///C:/%E5%B0%88.../a.png` | **不可解析** |
 
 不可解析之寫法在Word內成為24×24之破圖連結；亦可改用`data:`網址避開路徑問題。
+
+## 並行轉檔與另存重試
+
+轉檔器每次另起獨立之Word實例並只結束自己所開者，故多個轉檔可並行。Word有一項已知限制：兩個實例**同時另存至同一資料夾**時，其一偶會於數十毫秒內失敗並回報`Word 無法儲存或建立此檔案`(com_error，scode`-2146823132`)；此與機器負載、防毒掃描無關(實測：兩實例約定同刻另存至同一資料夾，不重試時最高三至六成之輪次有一方失敗，文件愈大愈少；另存至不同資料夾則0次；實際轉檔因另存時刻不會恰好重疊，故偶發)。轉檔器因此對**此碼**於同一份文件有界重試另存(實測重試一次即成功)：
+
+- `opt.saveRetryCount`：重試次數(不含首次)，非負整數，預設5，給0即不重試，無效值沿用預設。
+- `opt.saveRetryInterval`：重試之基準間隔(毫秒)，0至2147483647(計時上限)之數，預設300，無效或超出範圍者沿用預設；每次實際等待為基準間隔乘以[1,2)之隨機倍率，避免多個失敗者同刻再撞。
+- 只對此碼重試；其他錯誤(圖片無法解析、輸出檔使用中、路徑無效等)立即失敗。同一碼亦見於磁碟已滿、資料夾唯讀等持續性原因，此時重試用盡(預設約1.5至3秒)後照常失敗。
+- 重試用盡仍失敗者照常reject(fail-closed，不回成功)；reject字串於Word之原錯誤前逐行列出各次重試，例如：
+
+```alias
+code[1]:
+save retry 1/2 after 312 ms since SaveAs2 failed with -2146823132
+save retry 2/2 after 508 ms since SaveAs2 failed with -2146823132
+error: com_error: (-2147352567, '發生例外狀況。', (0, 'Microsoft Word', 'Word 無法儲存或建立此檔案。…', 'wdmain11.chm', 24636, -2146823132), None)
+```
+
+- 欲根本避開此衝突，可令並行轉檔之輸出分屬不同資料夾。
 
 ## Breaking changes
 

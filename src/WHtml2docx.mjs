@@ -6,6 +6,7 @@ import isestr from 'wsemi/src/isestr.mjs'
 import isearr from 'wsemi/src/isearr.mjs'
 import ispnum from 'wsemi/src/ispnum.mjs'
 import isp0int from 'wsemi/src/isp0int.mjs'
+import isp0num from 'wsemi/src/isp0num.mjs'
 import cdbl from 'wsemi/src/cdbl.mjs'
 import cint from 'wsemi/src/cint.mjs'
 import str2b64 from 'wsemi/src/str2b64.mjs'
@@ -42,6 +43,8 @@ function isWindows() {
  * @param {Number} [opt.imgRatioWidthMax=1] 輸入圖片最大寬度比例，值介於0至1，圖片最大寬度為所在節之版心寬乘以本值，預設1
  * @param {Number} [opt.imgRatioHeightMax=1] 輸入圖片最大高度比例，值介於0至1，圖片最大高度為所在節之版心高乘以0.937043054427296(為圖名預留空間)再乘以本值；有給imgHeightReserveLines且其生效時，改為其算出之高度乘以本值。預設1
  * @param {Integer} [opt.imgHeightReserveLines=null] 輸入行格線模板之圖片下方預留格數，為非負整數，預設null(不啟用)。僅於圖片所在節設有文件格線(Word之「只指定行的格線」「指定行與字元的格線」「文字對齊字元格線」)時生效：圖片最大高度改為(每頁格數－本值)×行距－0.5點，行距為模板之文件格線行距(w:docGrid之w:linePitch)，每頁格數為版心高÷行距之整數部分。行格線下圖片段佔「圖高÷行距」無條件進位之格數，故整頁高之圖下方仍留有本值格數，供間隔段與圖名使用，例如間隔段1格、圖名至多2行時至少給3。格數依實際所佔計，行距18點時12pt中文字每行佔1格、14pt之標楷體每行佔2格。建議再多給1格作為餘裕(如前例給4)：帶段前段後距離之段落會使其後各行不再對齊格線而多佔，頁首頁尾高於邊界時Word亦會縮小本文區，使每頁實際格數少於推算值。給無效值、模板無行格線、或本值不小於每頁格數時不生效，沿用imgRatioHeightMax之預設算法
+ * @param {Integer} [opt.saveRetryCount=5] 輸入另存遇暫時性衝突時之重試次數(不含首次)，為非負整數，預設5；無效值沿用預設。多個轉檔同時另存至同一資料夾時，Word(各轉檔各一個實例)偶有一方回報「Word 無法儲存或建立此檔案」(com_error錯誤碼-2146823132，數十毫秒內即失敗，另一實例之暫存檔所致)，轉檔器僅對此碼於同一份文件重試另存；重試用盡仍失敗者照常reject(訊息含重試過程)，其他錯誤(磁碟已滿、路徑無效、輸出檔使用中等)不重試。給0即不重試
+ * @param {Number} [opt.saveRetryInterval=300] 輸入另存重試之基準間隔毫秒數，為0至2147483647(計時上限)之數，預設300，無效或超出範圍者沿用預設(由轉檔器判定)；每次實際等待為基準間隔乘以[1,2)之隨機倍率(避免多個失敗者同刻再撞)
  * @param {Number} [opt.timeout=null] 輸入轉檔逾時毫秒數，預設null表示不限制；逾時時強制關閉轉檔器並reject回傳逾時訊息，惟由轉檔器經COM啟動之Word不在其程序樹內，不會一併被關閉
  * @returns {Promise} 回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息字串
  * @example
@@ -115,6 +118,24 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
     }
     else {
         imgHeightReserveLines = null
+    }
+
+    //saveRetryCount, 非負整數才採用, 其餘為null(送null時由轉檔器採其預設)
+    let saveRetryCount = get(opt, 'saveRetryCount', null)
+    if (isp0int(saveRetryCount) && Number.isFinite(Number(saveRetryCount))) {
+        saveRetryCount = cint(saveRetryCount)
+    }
+    else {
+        saveRetryCount = null
+    }
+
+    //saveRetryInterval, 非負有限數才採用, 其餘為null(送null時由轉檔器採其預設)
+    let saveRetryInterval = get(opt, 'saveRetryInterval', null)
+    if (isp0num(saveRetryInterval) && Number.isFinite(Number(saveRetryInterval))) {
+        saveRetryInterval = cdbl(saveRetryInterval)
+    }
+    else {
+        saveRetryInterval = null
     }
 
     //timeout
@@ -203,6 +224,8 @@ async function WHtml2docx(fpInHtml, fpOutDocx, opt = {}) {
         imgRatioWidthMax,
         imgRatioHeightMax,
         imgHeightReserveLines,
+        saveRetryCount,
+        saveRetryInterval,
     }
     // console.log('inp', inp)
 

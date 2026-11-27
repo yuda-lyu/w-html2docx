@@ -2,17 +2,18 @@
 
 本檔記載當前已開發功能之最新狀態(只記現況,過程寫入`sgud/exp/experience.md`),與`sgud/rule/rulebook.md`(藍圖)比對即知尚未做到者.接續工作時先讀本檔.
 
-最近更新:2026-11-10(hd408 第一段).`package.json`之`version`未動(1.0.51);`dependencies.wsemi`為`^1.9.55`.
+最近更新:2026-11-27(h439:另存暫時性衝突重試).`package.json`之`version`未動(1.0.79 之現值);`dependencies.wsemi`為`^1.9.83`.
 
-## Word 實例(規則 R-WORD-01~05)
+## Word 實例(規則 R-WORD-01~06)
 
 | 項目 | 現況 | 規則 | 測試 |
 | --- | --- | --- | --- |
 | 取得 Word | `srcPython/htmlToDocx.py`之`htmlToDocx`以`wc.DispatchEx('Word.Application')`另起實例(原`Dispatch`會連上已在執行之 Word) | R-WORD-01 | 〈Word instance isolation〉① |
 | 收尾 | `closeOwnWord`:只關本行程之文件;`countOtherDocs`以物件身分盤點他人文件(含受保護檢視);有他人文件或無法判定時不 Quit;`Visible`/`DisplayAlerts`已移入`try` | R-WORD-02,03 | ③④ |
 | 開檔 | 模板與來源唯讀開啟;`fpOut`即該輸入檔時可寫開啟(`isSamePath`) | R-WORD-04 | ②(同時,錯開 1.5 秒,交錯),⑤ |
-| 執行檔 | `bin/htmlToDocx.exe`已以`srcPython/build.bat`重建(sha256`8bc802a9fb57f9cb2baed62b724a1e92a0d6949c6c3d1fbabf7ffc94e42c3917`,9521857 位元組),**待主控提交** | R-EXE-01 | 模擬夾全套 |
-| 驗證法 | `test/tools/wordInstance.mjs`(可移植輔助,含可見視窗監看)+`WHtml2docx.test`〈Word instance isolation〉6 案 | — | 修前 exe 紅,新 exe 綠 |
+| 另存 | `saveAs2WithRetry`(h439):只對 scode `-2146823132`(兩個 Word 實例同時另存至同一資料夾之衝突)於同一份文件重試,預設 5 次,基準 300 毫秒乘[1,2)隨機倍率;用盡或他種錯誤拋出原例外(fail-closed).`WHtml2docx`之`opt.saveRetryCount`,`opt.saveRetryInterval`傳至轉檔器 | R-WORD-06 | ⑥⑦⑧⑨,〈save retry〉5 案 |
+| 執行檔 | `bin/htmlToDocx.exe`為 h439 重建者(含另存重試;sha256`93151395ab40dba2f2bfbf274141695b8e93e395dd640fef0657ffcdbe0fbf77`,9521895 位元組),**待主控提交**;前版`8bc802a9fb57…`(9521857,hd408 之 Word 實例隔離,提交`f0a400e`) | R-EXE-01 | 模擬夾全套 |
+| 驗證法 | `test/tools/wordInstance.mjs`(可移植輔助,含可見視窗監看,`denyCreateIn`)+`WHtml2docx.test`〈Word instance isolation〉10 案+〈save retry〉5 案(`test/tools/saveRetryProbe.py`,`saveRaceProbe.py`) | — | 修前 exe 紅,新 exe 綠 |
 
 ## 圖片內嵌(規則 R-IMG-01~05,R-EXE-01)
 
@@ -28,14 +29,16 @@
 
 | 項目 | 現況 | 規則 | 測試 |
 | --- | --- | --- | --- |
-| 執行檔存放 | `bin/htmlToDocx.exe`為 hd408 重建者(Word 實例隔離;sha256`8bc802a9fb57…`,9521857 位元組),待主控提交;前版`b9d244e2ef64…`(9520499,圖片內嵌,提交`c9e7ea3`);`src/htmlToDocx.exe`保留舊版(舊版自主幹下載,不入 npm 包,不更新,sha256`9c763ac5…`) | R-BIN-05 | `unit-binManifest` |
-| 清單 | `bin/manifest.json`,pinned,commit`c9e7ea3131c4cdb400da36fb4dc4b7fa5f5fa864`,1 檔(sha256`b9d244e2ef64…`,9520499)——**與`bin/htmlToDocx.exe`現不一致**(兩段式第一段:執行檔先提交,清單由主控以`genBinManifest --commit <新提交>`重產) | R-BIN-02 | `unit-binManifest`(T2) |
+| 執行檔存放 | `bin/htmlToDocx.exe`為 h439 重建者(另存重試;sha256`93151395ab40dba2…`,9521895 位元組),待主控提交;前版`8bc802a9fb57…`(9521857,hd408 Word 實例隔離,提交`f0a400e`);更前版`b9d244e2ef64…`(9520499,圖片內嵌,提交`c9e7ea3`);`src/htmlToDocx.exe`保留舊版(舊版自主幹下載,不入 npm 包,不更新,sha256`9c763ac5…`) | R-BIN-05 | `unit-binManifest` |
+| 清單 | `bin/manifest.json`,pinned,commit`f0a400e1b362ad2da2073a5f045330201db0d6d7`,1 檔(sha256`8bc802a9fb57…`,9521857)——**與`bin/htmlToDocx.exe`現不一致**(兩段式第一段:執行檔先提交,清單由主控以`genBinManifest --commit <新提交>`重產) | R-BIN-02 | `unit-binManifest`(T2) |
 | 取得 | `src/ensureBins.mjs`轉呼叫 wsemi`fsEnsureBins`;`WHtml2docx`轉檔前經它取路徑;`WHtml2docx.ensureBins`供部署前預先取得;`autoDownloadFiles.mjs`為薄包裝 | R-BIN-03,06 | `api-ensureBins`,`WHtml2docx.test` |
 | 已移除 | `src/downloadFiles.mjs`(`fsDownloadFile`直連),`scripts/install.mjs`及`package.json`之`postinstall` | R-BIN-03 | `unit-binManifest`(無 postinstall) |
 | 忽略規則 | `.npmignore`:`/bin/*`,`!/bin/manifest.json`,`/bin-cache/`,`sgud`;`.gitignore`:`/bin-cache/` | R-BIN-01 | `unit-binManifest`(T1,S1/S5) |
 | 環境變數與離線 | `W_BIN_CACHE`,`W_BIN_MIRROR`,`W_BIN_OFFLINE`;README〈外部執行檔〉已寫 | R-BIN-04,07 | `api-ensureBins`(T3~T7) |
 
 ## 驗證紀錄
+
+- 2026-11-27(h439,另存暫時性衝突重試):成因為兩個 Word 實例同時另存至同一資料夾之毫秒級衝突(scode `-2146823132`),非防毒,非輸出檔被占用,非負載(實證見 experience〈另存暫時性衝突〉).`WHtml2docx.test`新增〈Word instance isolation〉⑥⑦⑧⑨ 與〈save retry〉5 案(合計 68 案);於[清單重產後]之模擬夾(新 exe+重算清單)全套 `mocha --parallel "test/*.test.mjs"` 68 passing / 0 failing / 0 pending;repo 內`npm test`在清單重產前有預期之紅(T2 與依清單取得 exe 之案,同 hd408 第一段).修前(HEAD 之 exe 與 py)新案全紅(⑥⑦⑧⑨ 與〈save retry〉before 鉤子,5 failing);19 項變異(py 14 項:不重試,多重試一次,用盡回成功,任何錯誤皆重試,無隨機倍率,不等待,負次數被採用,預設次數,預設間隔,呼叫點改回直接另存,錯誤碼不符,忽略次數,忽略間隔,間隔不判上限;JS 5 項:不送次數,不送間隔,次數不轉型,間隔 0 視為無效,次數 0 視為無效)全被殺;`saveRaceProbe.py`連跑 20 次(各 30 輪)修後 0 失敗,每次經重試成功 2~17 次(鑑別力前提成立),無重試之變異版每次 1~19 次失敗;eslint 0;private-guard CLEAN.
 
 - 2026-11-18(跟跑 wsemi 1.9.64,V20):離線缺檔(`E_OFFLINE_MISSING`)之訊息不再含 sha256、大小與路徑,`api-ensureBins` T6 兩案改驗`err.missing[]`欄位(`name`、`sha256`、`size`、`cachePath`、`mirrorPath`),`WHtml2docx()`之字串改為只含檔名與「呼叫`ensureBins()`讀`err.missing[]`」之固定說明,README〈外部執行檔〉已補放置位置之讀法;全套 `npm test` 59 passing / 0 failing(修前 57 passing + 2 failing;另一次全套曾見〈Word instance isolation〉之「②兩行程並行轉檔」1 案偶發紅〔Word 回報無法儲存〕,與離線缺檔無關,同組重跑 5 次 5/5 綠、全套重跑 1 次全綠);包裝之 2 式變異(字串夾帶快取路徑、改回透傳)皆被 `WHtml2docx.test` 之離線缺檔字串案殺.
 
@@ -46,7 +49,8 @@
 
 ## 已知缺口與待辦
 
-- **清單待重產(hd408 第二段)**:主控提交並推送新`bin/htmlToDocx.exe`(與`srcPython/htmlToDocx.py`,測試,sgud)後,執行`node toolg/genBinManifest.mjs --commit <新提交>`重產`bin/manifest.json`,再跑全套(R-BIN-08).重產前`npm test`有預期之紅(T2,及依清單取得 exe 之案).
+- **清單待重產(h439 第二段)**:主控提交並推送新`bin/htmlToDocx.exe`(與`srcPython/htmlToDocx.py`,`src/WHtml2docx.mjs`,測試,README,sgud)後,執行`node toolg/genBinManifest.mjs --commit <新提交>`重產`bin/manifest.json`,再跑全套(R-BIN-08).重產前`npm test`有預期之紅(T2,及依清單取得 exe 之案).
+- 另存重試(h439)之限制:只對 scode `-2146823132` 重試;衝突機轉(兩實例同夾建立暫存檔之競態)為推論,無系統層(Procmon 類)證據;根本避開法為令並行轉檔之輸出分屬不同資料夾(README〈並行轉檔與另存重試〉).⑨ 與〈save retry〉須本機有 python 與 pywin32(無則略過並印出原因,不略過即全綠之前提).他三個 Word 套件(w-docx2html,w-docx-split,w-docx2pdf)之同形風險未實測(見 feedback 第 7 列).
 - Word 實例隔離之未實測格:使用者開著可見之互動 Word 時(不得開可見視窗,依 R-WORD-01 之機轉推論不受影響);轉檔中使用者自檔案總管開 docx 是否經 DDE 進入本行程之隱藏實例(若進入,R-WORD-02 見外來文件即不 Quit);`countOtherDocs`之「無法判定→保留實例」分支無法注入,只以讀碼驗證.
 - Word 實例隔離之已知限制(外審 hd408):他行程(舊寫法)先 Quit 本行程之實例,或取用本行程已開之同一文件物件時,本行程仍會失敗或關掉該文件,須對方改用`DispatchEx`(w-docx2html,w-docx-split,w-docx2pdf 由主控另派);盤點與 Quit 之間他人仍可連入;保留實例時之 stderr 提示 JS 端不轉出(`WHtml2docx`成功只回`ok`);`DispatchEx`本身於取得控制代碼前失敗時無從收尾;轉檔器被`opt.timeout`強制結束時 WINWORD 不在其行程樹(JSDoc 已載);指定模板之巨集安全性(`AutomationSecurity`未設)屬改前既有設計,未處理.
 - `dist/w-html2docx.umd.js`仍是舊建置,發布時自動重新產製.

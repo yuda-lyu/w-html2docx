@@ -1,5 +1,6 @@
 import fs from 'fs'
 import http from 'http'
+import path from 'path'
 import { spawn, execFileSync } from 'child_process'
 
 
@@ -324,6 +325,40 @@ async function startVisibleWordWatch(fpStop) {
 }
 
 
+//denyCreateIn, 對資料夾fd加入「拒絕Everyone建立檔案與子資料夾」之權限項目(icacls /deny *S-1-1-0:(WD,AD)), 扮演「目的資料夾暫時無法建立暫存檔」:
+//  Word另存至該夾時回報「無法儲存或建立此檔案」(經IDispatch之scode為-2146823132), 與兩個Word實例同時另存至同一資料夾時之失敗同碼(實測); 移除該項目後再存即成功
+//  為何不以檔案鎖扮演: 占住輸出檔(FileShare.None等)Word回報「檔案正被另一處理程序使用」(另兩種碼), 占住暫存檔名(~WRD0000.tmp等)Word改用他名而成功, 皆不是此碼
+//  回傳{ denied, release }: denied為此刻確以寫檔驗證自己已無法在該夾建立檔案(避免替身未生效而測試空過); release()移除該拒絕項目(只移除Everyone之拒絕項, 不動其他權限)並回驗該夾已可建立檔案,
+//  可重複呼叫(呼叫端須於finally呼叫); 僅供本測試自建之資料夾使用(拒絕期間對本行程亦不可建立檔案)
+function denyCreateIn(fd) {
+    let probe = path.join(fd, '.deny-probe')
+    let canCreate = () => {
+        try {
+            fs.writeFileSync(probe, 'x')
+            fs.rmSync(probe, { force: true })
+            return true
+        }
+        catch (e) {
+            return false
+        }
+    }
+    execFileSync('icacls', [fd, '/deny', '*S-1-1-0:(WD,AD)'], { windowsHide: true, stdio: 'ignore' })
+    let denied = !canCreate()
+    let released = false
+    let release = () => {
+        if (released) {
+            return
+        }
+        execFileSync('icacls', [fd, '/remove:d', '*S-1-1-0'], { windowsHide: true, stdio: 'ignore' })
+        released = true
+        if (!canCreate()) {
+            throw new Error(`the deny entry on ${fd} could not be removed`)
+        }
+    }
+    return { denied, release }
+}
+
+
 //startHoldServer, 本機http伺服器(127.0.0.1, 作業系統配發埠): 對/hold.png之請求一律扣住直到release()才回傳圖片, 供「轉檔進行中」之確定性時點
 //  Word匯入html時會向網址取圖, 扣住期間Word仍受理他行程之COM呼叫(實測); firstRequest()於第一個請求到達時resolve
 async function startHoldServer(png) {
@@ -368,4 +403,4 @@ async function startHoldServer(png) {
 }
 
 
-export { sleep, wordPids, isAutomationWord, waitWordGone, killNewAutomationWords, listDisabledItems, clearDisabledItems, startHeldWord, startBorrower, startVisibleWordWatch, startHoldServer }
+export { sleep, wordPids, isAutomationWord, waitWordGone, killNewAutomationWords, listDisabledItems, clearDisabledItems, startHeldWord, startBorrower, startVisibleWordWatch, denyCreateIn, startHoldServer }

@@ -188,6 +188,50 @@ def embedLinkedPictures(doc):
     return [fp for lf, fp in getLinkedPictures(doc)]
 
 
+#Word另存失敗之暫時性衝突: Word經IDispatch回報之excepinfo之scode為0x800A1424(-2146823132, Word錯誤5156), 訊息「Word 無法儲存或建立此檔案」
+#why: 兩個Word實例同時另存至同一資料夾時, 其一會於十餘毫秒內失敗(實測: 兩實例約定同刻SaveAs2至同夾, 120次中23次失敗, 且皆為此碼; 至不同資料夾則118次0失敗; 失敗者隔0.2秒重存即成功, 12/12); 機轉推論為兩實例於同夾建立暫存檔之競態(未取得系統層證據), 與機器負載, 防毒, 輸出檔被占用皆無關, 非轉檔器之輸入問題
+SCODE_SAVE_CONFLICT = -2146823132
+
+#預設重試次數(不含首次)與基準間隔(毫秒); 由呼叫端經saveRetryCount, saveRetryInterval覆寫
+SAVE_RETRY_COUNT_DEFAULT = 5
+SAVE_RETRY_INTERVAL_DEFAULT = 300
+SAVE_RETRY_INTERVAL_MAX = 2147483647 #計時毫秒之上限(同wsemi之TIMER_TIME_MAX), 超出視為未給
+
+
+def isSaveConflict(e):
+    #是否為另存之暫時性衝突(僅此一碼, 其餘錯誤如磁碟已滿, 路徑無效, 檔案使用中皆不重試)
+    try:
+        return e.excepinfo is not None and e.excepinfo[5] == SCODE_SAVE_CONFLICT
+    except:
+        return False
+
+
+def saveAs2WithRetry(doc, fpOut, fmt, retryCount, retryInterval, sleep=None, rand=None):
+    #SaveAs2, 遇暫時性衝突(isSaveConflict)時有界重試: 最多重試retryCount次, 每次等待retryInterval毫秒乘以[1,2)之隨機倍率(避免多個失敗者同刻再撞);
+    #  重試用盡或非暫時性錯誤即拋出原例外(fail-closed: 不回成功); 回傳實際重試次數. sleep, rand為注入點, 供測試以假時鐘與固定亂數驗證
+    import time
+    import random
+    import pythoncom
+
+    if sleep is None:
+        sleep = time.sleep
+    if rand is None:
+        rand = random.random
+
+    k = 0
+    while True:
+        try:
+            doc.SaveAs2(fpOut, fmt)
+            return k
+        except pythoncom.com_error as e:
+            if k >= retryCount or not isSaveConflict(e):
+                raise
+            k += 1
+            ms = retryInterval * (1 + rand())
+            print(f'save retry {k}/{retryCount} after {int(ms)} ms since SaveAs2 failed with {SCODE_SAVE_CONFLICT}', file=sys.stderr)
+            sleep(ms / 1000)
+
+
 def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
 
     #Open, 開啟之文件推入docs, 供htmlToDocx於finally以closeOwnWord關閉
@@ -398,9 +442,9 @@ def htmlToDocxCore(app, docs, fpInSrc, fpInTemp, fpOut, opt):
         err=getError()
         print(err, file=sys.stderr)
 
-    #SaveAs
+    #SaveAs, 遇另一Word實例同時另存至同資料夾所致之暫時性衝突時有界重試(見saveAs2WithRetry), 重試用盡仍失敗者照常拋出
     WdSaveFormat = 16 #wdFormatDocumentDefault=16(docx) #https://learn.microsoft.com/zh-tw/office/vba/api/word.wdsaveformat
-    docInTemp.SaveAs2(fpOut, WdSaveFormat)
+    saveAs2WithRetry(docInTemp, fpOut, WdSaveFormat, opt['saveRetryCount'], opt['saveRetryInterval'])
 
 
 def isSamePath(fp1, fp2):
@@ -526,6 +570,20 @@ def core(b64):
             reserveLines=int(reserveLines)
         opt['imgHeightReserveLines']=reserveLines
 
+        #saveRetryCount, 另存遇暫時性衝突時之重試次數(不含首次), 非負整數才採用, 其餘為預設
+        #saveRetryInterval, 重試之基準間隔毫秒, 非負有限數且不大於計時上限(SAVE_RETRY_INTERVAL_MAX)才採用, 其餘為預設
+        #note: 須以get取得, 舊版呼叫端不送此鍵
+        retryCount=o.get('saveRetryCount')
+        if isinstance(retryCount, bool) or not isinstance(retryCount, (int, float)) or not math.isfinite(retryCount) or retryCount < 0 or retryCount != int(retryCount):
+            retryCount=SAVE_RETRY_COUNT_DEFAULT
+        else:
+            retryCount=int(retryCount)
+        opt['saveRetryCount']=retryCount
+        retryInterval=o.get('saveRetryInterval')
+        if isinstance(retryInterval, bool) or not isinstance(retryInterval, (int, float)) or not math.isfinite(retryInterval) or retryInterval < 0 or retryInterval > SAVE_RETRY_INTERVAL_MAX:
+            retryInterval=SAVE_RETRY_INTERVAL_DEFAULT
+        opt['saveRetryInterval']=retryInterval
+
         #htmlToDocx
         htmlToDocx(fpInSrc, fpInTemp, fpOut, opt)
 
@@ -572,8 +630,8 @@ def run():
         sys.exit(1)
 
 
-if True:
-    #正式版
+if __name__ == '__main__':
+    #正式版(PyInstaller打包後主程式之__name__亦為__main__); 以模組匯入時(測試以python載入本檔驗證saveAs2WithRetry等函數)不執行
 
     #run
     run()

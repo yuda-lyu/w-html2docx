@@ -4,7 +4,7 @@
 
 ## R-BIN 外部執行檔之存放、下載、校驗與離線
 
-制式規格:`C:\opensrcOper\dspec\外部執行檔之存放下載校驗與離線.md`(本套件為 B 類改造,釘選模式,2026-10-28 bin-html2docx).**本節只摘要,細節以規格為準,不重述**;主控帳本 G10 登記站點全集.
+制式規格:主控之〈外部執行檔之存放下載校驗與離線〉(dspec;本套件為 B 類改造,釘選模式,2026-10-28 bin-html2docx).**本節只摘要,細節以規格為準,不重述**;主控帳本 G10 登記站點全集.
 
 | 規則 | 內容 | 規格條 | 測試 |
 | --- | --- | --- | --- |
@@ -20,7 +20,7 @@
 盤點指令:
 
 ```
-node C:/opensrcOper/tools/scan-bins.mjs --only w-html2docx
+主控工具 scan-bins(--only w-html2docx)
 git grep -n "fsDownloadFile\b\|fsDownloadFileVerify\|postinstall" -- src package.json
 ```
 
@@ -61,15 +61,17 @@ git grep -n "LinkFormat" -- srcPython
 | R-WORD-03 | 例外路徑不殘留:`Visible`/`DisplayAlerts`之設定與轉檔同在`try`內,任何例外(含開檔失敗、`LinkedPictureError`)皆經`finally`之`closeOwnWord` | `htmlToDocx` | ③(a)(b)(c) |
 | R-WORD-04 | 模板與來源以唯讀開啟`Documents.Open(fp, False, not isSamePath(fp, fpOut))`(位置參數依序為 FileName,ConfirmConversions,ReadOnly);轉檔器只`SaveAs2`至`fpOut`.why:各轉檔各一個實例,兩轉檔以可寫方式同開同一檔(如內建模板)時,後開者跳出「檔案使用中」對話框(可見)而停住(實測).**例外**:`fpOut`即該輸入檔(如以輸出覆寫模板)時可寫開啟——唯讀開啟則 Word 拒絕另存回原路徑(「這是唯讀檔案,無法儲存」,實測),改前可覆寫,不得改變.限制:唯讀只解此鎖檔情境,編碼、密碼、修復、安全警告等互動仍可能出現(改前即有) | `htmlToDocxCore`,`isSamePath` | ②(同時,錯開 1.5 秒,交錯,同模板同 html);⑤ |
 | R-WORD-05 | 不開可見視窗:`app.Visible = False`,`app.DisplayAlerts = False`;測試中扮演他行程之 Word 亦一律隱藏 | `htmlToDocx`,`test/tools/wordInstance.mjs` | 全組 |
+| R-WORD-06 | 另存遇暫時性衝突有界重試(主控排程第 439 項,2026-11-27):`SaveAs2`一律經`saveAs2WithRetry`,**只對**Word 回報之 scode `-2146823132`(`com_error.excepinfo[5]`,「Word 無法儲存或建立此檔案」)於同一份文件重試,最多`saveRetryCount`次(預設 5,0 即不重試,無效值用預設),每次等待`saveRetryInterval`毫秒(預設 300)乘以[1,2)之隨機倍率(多個失敗者不同刻再撞);每次重試於 stderr 印`save retry k/n after N ms since SaveAs2 failed with -2146823132`;**重試用盡或他種錯誤(含他種 scode,如輸出檔使用中`-2146822935`)即拋出原例外**(fail-closed,離開碼 1,不產生輸出檔,不得回成功).`WHtml2docx`之`opt.saveRetryCount`(非負整數),`opt.saveRetryInterval`(非負數)傳至轉檔器,無效值送 null(由轉檔器用預設);轉檔器對間隔另判範圍 0~2147483647(計時上限,超出視為未給用預設,規格〈輸入參數之檢測機制〉K3);舊版呼叫端不送此二鍵時轉檔器用預設.why:兩個 Word 實例同時另存至同一資料夾時其一偶於十餘毫秒內失敗,與負載,防毒無關(實證見 experience〈另存暫時性衝突〉);重試一次(0.2 秒)即成功.限制:此碼亦見於磁碟已滿,資料夾唯讀,屆時重試用盡(預設多等約 1.5~3 秒)後照常失敗;不屬此碼之失敗不重試 | `srcPython/htmlToDocx.py`之`saveAs2WithRetry`,`isSaveConflict`,`core`(解析二鍵);`src/WHtml2docx.mjs`(`opt`解析與送出) | ⑥⑦⑧⑨;〈save retry〉5 案 |
 
 盤點指令:
 
 ```
 git grep -n "Dispatch(\|DispatchEx(\|GetActiveObject\|\.Quit(" -- srcPython
 git grep -n "Documents.Open(" -- srcPython
+git grep -n "SaveAs2" -- srcPython
 ```
 
-判準:`srcPython/`取得 Word 只有`wc.DispatchEx('Word.Application')`一處,無`Dispatch(`;`.Quit(`只在`closeOwnWord`;`Documents.Open(`皆以第三個位置參數`not isSamePath(fp, fpOut)`開啟.
+判準:`srcPython/`取得 Word 只有`wc.DispatchEx('Word.Application')`一處,無`Dispatch(`;`.Quit(`只在`closeOwnWord`;`Documents.Open(`皆以第三個位置參數`not isSamePath(fp, fpOut)`開啟;`SaveAs2(`只在`saveAs2WithRetry`內(`htmlToDocxCore`以`saveAs2WithRetry(...)`呼叫).
 
 驗證法(可移植):`test/tools/wordInstance.mjs`不含本套件之轉檔呼叫,他套件可原檔複製(前提寫於檔頭:Windows PowerShell 5.1、Word 2016 以後、Node 18.2 以後、於 Word 測試閘內執行)——`wordPids`,`isAutomationWord`,`waitWordGone`,`killNewAutomationWords`(只結束本組開始後新出現且命令列含`/Automation`者;無法區分他人於期間另起者,故須在測試閘內),`listDisabledItems`/`clearDisabledItems`(回傳實際刪除與刪除失敗者),`startHeldWord`(以 PowerShell 經 COM 另起隱藏 Word 並持有一份含未存文字之文件,扮演他行程或使用者之 Word),`startBorrower`(以 GetActiveObject 連上隱藏之 Word、新增文件並寫入唯一未存文字,扮演舊寫法之他行程;可見之 Word 不碰;Word 忙碌時以`InvokeMember`讀寫並重試),`startVisibleWordWatch`(每 200 ms 列 WINWORD 之可見頂層視窗,自動化實例出現可見視窗即結束之;各案以`visibleSince`斷言 0 筆;短於一輪之閃現可能漏看),`startHoldServer`(扣住 http 取圖之回應,作「轉檔進行中」之確定時點).各套件仿〈Word instance isolation〉寫其轉檔呼叫;輸入無法引用 http 資源者,改以轉檔期間取樣 WINWORD 判定「另起實例」,其餘斷言(他人 Word 存活且文件不變、無殘留、無可見視窗)不依賴時點.
 
@@ -77,4 +79,5 @@ git grep -n "Documents.Open(" -- srcPython
 
 - 需實際`htmlToDocx.exe`之功能測試(`WHtml2docx.test`)以`test/tools/binEnv.mjs`之`setBinEnv(tag)`取得:將`bin/`實檔放入`test/_tmp/<tag>/mirror/`,設`W_BIN_MIRROR`,`W_BIN_CACHE`,`W_BIN_OFFLINE=1`,測完還原並刪除,**不連外網,不寫`bin-cache/`**.
 - `api-ensureBins`以本機 HTTP 伺服器(port 8937)扮`raw.githubusercontent.com`(注入`fetch`改指本機,其餘網址一律拒絕),不連外網.
-- 〈Word instance isolation〉(6 案:①③②a②b④⑤)須在**無其他 WINWORD**時執行(有則整組略過並印出原因:修前之轉檔器會借用並結束之,且④無法確定連上本行程之實例);略過或初始化前失敗時`after`不結束任何 WINWORD.扣住點伺服器以作業系統配發埠(`listen(0)`).收尾以`killNewAutomationWords`只結束本組新出現之自動化 Word;以`clearDisabledItems`清除指向 repo 內檔案之 Word 停用項目(before 於略過判定之後一次;after 只在有強制結束時)——強制結束開著文件之 Word 後,Word 將該文件列入`HKCU\Software\Microsoft\Office\16.0\Word\Resiliency\DisabledItems`,之後開該檔即跳出可見訊息框而停住(實測).測試是否可自動刪除使用者登錄中指向 repo 之停用項目,待主控裁示(hd408 報告〈需裁示〉).
+- R-WORD-06 之測試:〈Word instance isolation〉⑥⑦⑧⑨(Word 測試閘內)與〈save retry〉5 案(以假 Word 物件,不啟動 Word,`test/tools/saveRetryProbe.py`).**無法以檔案鎖扮演**此衝突(實測:占住輸出檔得另兩種 scode `-2146822935`,`-2146822932`,占住暫存檔名`~WRD0000.tmp`等 Word 改用他名而成功),故 ⑥⑦⑧ 以`wordInstance.mjs`之`denyCreateIn`(`icacls /deny`使輸出夾暫時無法建立檔案,Word 回報同碼同訊息)扮演:⑥ 等轉檔器 stderr 之第 1 行重試行(事件同步)後`release()`,⑦ 一直擋至轉檔器結束,⑧ 經`WHtml2docx`之`opt`;⑨ 以`test/tools/saveRaceProbe.py`起兩個獨立行程各一個真實 Word 實例於約定時刻同刻另存(30 輪;`retried >= 1`為鑑別力前提,Word 日後若修正此衝突須重審);⑨ 與〈save retry〉須本機有 python 與 pywin32(建置轉檔器之相依),否則略過並印出原因.python 之呼叫一律`-I -B`(不寫`srcPython/__pycache__`).
+- 〈Word instance isolation〉(10 案:①③②a②b④⑤⑥⑦⑧⑨)須在**無其他 WINWORD**時執行(有則整組略過並印出原因:修前之轉檔器會借用並結束之,且④無法確定連上本行程之實例);略過或初始化前失敗時`after`不結束任何 WINWORD.扣住點伺服器以作業系統配發埠(`listen(0)`).收尾以`killNewAutomationWords`只結束本組新出現之自動化 Word;以`clearDisabledItems`清除指向 repo 內檔案之 Word 停用項目(before 於略過判定之後一次;after 只在有強制結束時)——強制結束開著文件之 Word 後,Word 將該文件列入`HKCU\Software\Microsoft\Office\16.0\Word\Resiliency\DisabledItems`,之後開該檔即跳出可見訊息框而停住(實測).測試是否可自動刪除使用者登錄中指向 repo 之停用項目,待主控裁示(hd408 報告〈需裁示〉).
